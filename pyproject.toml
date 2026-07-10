@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
-    { name = "Rashid Khan" },
+    { name = "Rashid Ali Khan", email = "rashidalikhan99@gmail.com" },
 ]
 keywords = ["ai", "governance", "compliance", "llm", "guardrails", "eu-ai-act", "security"]
 classifiers = [
@@ -21,6 +21,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Security",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
@@ -45,10 +47,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/overrule/overrule-python"
-Documentation = "https://github.com/overrule/overrule-python#readme"
-Repository = "https://github.com/overrule/overrule-python"
-Issues = "https://github.com/overrule/overrule-python/issues"
+Homepage = "https://overrule.dev"
+Documentation = "https://github.com/overruledev/overrule-python#readme"
+Repository = "https://github.com/overruledev/overrule-python"
+Issues = "https://github.com/overruledev/overrule-python/issues"
+Changelog = "https://github.com/overruledev/overrule-python/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["overrule"]
