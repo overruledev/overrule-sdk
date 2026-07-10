@@ -22,6 +22,7 @@ One SDK. Every call intercepted. Full audit trail. EU AI Act ready.
 [![Python](https://img.shields.io/pypi/pyversions/overrule?style=flat-square&labelColor=1e1e2e)](https://pypi.org/project/overrule/)
 [![Tests](https://img.shields.io/badge/tests-78_passing-10b981?style=flat-square&labelColor=1e1e2e)](#)
 [![License](https://img.shields.io/badge/license-MIT-white?style=flat-square&labelColor=1e1e2e)](LICENSE)
+[![GitHub](https://img.shields.io/github/stars/overruledev/overrule-python?style=flat-square&labelColor=1e1e2e)](https://github.com/overruledev/overrule-python)
 
 <br />
 
@@ -278,7 +279,7 @@ guard = Guard(config=GuardConfig.from_env(api_key="sk_ovr_xxxxx", fail_open=True
 ## Development
 
 ```bash
-git clone https://github.com/overrule/overrule-python.git && cd overrule-python
+git clone https://github.com/overruledev/overrule-python.git && cd overrule-python
 pip install -e ".[dev]"
 pytest && ruff check . && mypy overrule/
 ```
