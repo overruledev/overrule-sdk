@@ -16,6 +16,7 @@ One SDK. Every call intercepted. Full audit trail. EU AI Act ready.
 
 [![PyPI](https://img.shields.io/pypi/v/overrule?style=flat-square&color=6366f1&labelColor=1e1e2e)](https://pypi.org/project/overrule/)
 [![Python](https://img.shields.io/pypi/pyversions/overrule?style=flat-square&labelColor=1e1e2e)](https://pypi.org/project/overrule/)
+[![Downloads](https://img.shields.io/pypi/dm/overrule?style=flat-square&labelColor=1e1e2e)](https://pypi.org/project/overrule/)
 [![Tests](https://img.shields.io/badge/tests-78_passing-10b981?style=flat-square&labelColor=1e1e2e)](#)
 [![License](https://img.shields.io/badge/license-MIT-white?style=flat-square&labelColor=1e1e2e)](LICENSE)
 [![GitHub](https://img.shields.io/github/stars/overruledev/overrule-python?style=flat-square&labelColor=1e1e2e)](https://github.com/overruledev/overrule-python)
@@ -32,9 +33,10 @@ One SDK. Every call intercepted. Full audit trail. EU AI Act ready.
 ## Get Started
 
 ```bash
-pip install overrule[openai]        # OpenAI only
-pip install overrule[anthropic]     # Anthropic only
-pip install overrule[all]           # Both providers
+pip install overrule               # Core SDK
+pip install overrule[openai]       # + OpenAI provider
+pip install overrule[anthropic]    # + Anthropic provider
+pip install overrule[all]          # All providers
 ```
 
 ```python
@@ -266,6 +268,7 @@ guard = Guard(config=GuardConfig.from_env(api_key="sk_ovr_xxxxx", fail_open=True
 - [x] Custom policy engine
 - [x] Cloud dashboard with real-time enforcement data
 - [x] Event ingestion API (`POST /api/v1/events`)
+- [x] Published on PyPI (`pip install overrule`)
 - [ ] Streaming interception
 - [ ] LangChain / CrewAI / OpenAI Agents SDK integrations
 - [ ] Rust core for <100μs evaluation
