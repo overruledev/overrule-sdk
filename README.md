@@ -2,7 +2,7 @@
 <br />
 <br />
 
-<img alt="Overrule" src=".github/assets/logo.png" width="240">
+<img alt="Overrule" src=".github/assets/logo.svg" width="240">
 
 <br />
 <br />
