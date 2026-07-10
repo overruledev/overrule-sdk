@@ -2,11 +2,7 @@
 <br />
 <br />
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://overrule.dev/github/logo-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://overrule.dev/github/logo-light.svg">
-  <img alt="Overrule" src="https://overrule.dev/github/logo-dark.svg" width="200">
-</picture>
+<img alt="Overrule" src=".github/assets/logo.png" width="240">
 
 <br />
 <br />
