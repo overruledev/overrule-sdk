@@ -48,10 +48,10 @@ dev = [
 
 [project.urls]
 Homepage = "https://overrule.dev"
-Documentation = "https://github.com/overruledev/overrule-python#readme"
-Repository = "https://github.com/overruledev/overrule-python"
-Issues = "https://github.com/overruledev/overrule-python/issues"
-Changelog = "https://github.com/overruledev/overrule-python/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/overruledev/overrule-sdk#readme"
+Repository = "https://github.com/overruledev/overrule-sdk"
+Issues = "https://github.com/overruledev/overrule-sdk/issues"
+Changelog = "https://github.com/overruledev/overrule-sdk/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["overrule"]

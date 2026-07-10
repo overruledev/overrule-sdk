@@ -27,7 +27,7 @@
   <a href="https://pypi.org/project/overrule/"><img src="https://img.shields.io/pypi/dm/overrule?style=flat-square&labelColor=1e1e2e" /></a>
   <img src="https://img.shields.io/badge/tests-78_passing-10b981?style=flat-square&labelColor=1e1e2e" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-white?style=flat-square&labelColor=1e1e2e" /></a>
-  <a href="https://github.com/overruledev/overrule-python"><img src="https://img.shields.io/github/stars/overruledev/overrule-python?style=flat-square&labelColor=1e1e2e" /></a>
+  <a href="https://github.com/overruledev/overrule-sdk"><img src="https://img.shields.io/github/stars/overruledev/overrule-sdk?style=flat-square&labelColor=1e1e2e" /></a>
 </p>
 
 ---
@@ -334,7 +334,7 @@ guard.register_policy(TopicRestriction)
 ## Project Structure
 
 ```
-overrule-python/
+overrule-sdk/
 ├── overrule/
 │   ├── __init__.py              # Public API (Guard, SyncGuard, PolicyAction)
 │   ├── guard.py                 # Core Guard class (async context manager)
@@ -404,8 +404,8 @@ overrule-python/
 
 ```bash
 # Clone
-git clone https://github.com/overruledev/overrule-python.git
-cd overrule-python
+git clone https://github.com/overruledev/overrule-sdk.git
+cd overrule-sdk
 
 # Install with dev dependencies
 pip install -e ".[dev]"
@@ -426,7 +426,7 @@ We're building in public. Contributions welcome.
 
 ```bash
 # Fork + clone
-git clone https://github.com/yourusername/overrule-python.git
+git clone https://github.com/yourusername/overrule-sdk.git
 
 # Create feature branch
 git checkout -b feature/your-feature

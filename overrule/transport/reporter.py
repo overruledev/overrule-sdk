@@ -73,7 +73,7 @@ class EventReporter:
             return
         headers: dict[str, str] = {
             "Content-Type": "application/json",
-            "User-Agent": f"overrule-python/{overrule.__version__}",
+            "User-Agent": f"overrule-sdk/{overrule.__version__}",
         }
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
