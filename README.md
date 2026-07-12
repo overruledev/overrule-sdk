@@ -22,10 +22,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/overruledev/overrule-sdk/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/overruledev/overrule-sdk/ci.yml?branch=main&style=flat-square&label=CI&labelColor=1e1e2e" /></a>
   <a href="https://pypi.org/project/overrule/"><img src="https://img.shields.io/pypi/v/overrule?style=flat-square&color=6366f1&labelColor=1e1e2e" /></a>
   <a href="https://pypi.org/project/overrule/"><img src="https://img.shields.io/pypi/pyversions/overrule?style=flat-square&labelColor=1e1e2e" /></a>
   <a href="https://pypi.org/project/overrule/"><img src="https://img.shields.io/pypi/dm/overrule?style=flat-square&labelColor=1e1e2e" /></a>
-  <img src="https://img.shields.io/badge/tests-78_passing-10b981?style=flat-square&labelColor=1e1e2e" />
+  <img src="https://img.shields.io/badge/tests-137_passing-10b981?style=flat-square&labelColor=1e1e2e" />
+  <img src="https://img.shields.io/badge/coverage-≥80%25-10b981?style=flat-square&labelColor=1e1e2e" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-white?style=flat-square&labelColor=1e1e2e" /></a>
   <a href="https://github.com/overruledev/overrule-sdk"><img src="https://img.shields.io/github/stars/overruledev/overrule-sdk?style=flat-square&labelColor=1e1e2e" /></a>
 </p>
@@ -55,11 +57,11 @@ async with Guard() as guard:
     response = await guard.chat(
         model="gpt-4o",
         messages=[{"role": "user", "content": user_input}],
-        policies=["pii-detection", "injection-detection"],
+        policies=["pii-detection", "injection-detection", "toxicity-detection"],
     )
 ```
 
-That's it. Every call is now scanned for PII and injection attacks, violations are blocked before reaching users, and a structured event is shipped to your cloud dashboard.
+That's it. Every call is now scanned for PII, injection attacks, and toxic content. Violations are blocked before reaching users, and a structured event is shipped to your cloud dashboard.
 
 ---
 
@@ -72,11 +74,16 @@ That's it. Every call is now scanned for PII and injection attacks, violations a
 | **1-Line Integration** | Wrap any LLM call with `guard.chat()`. Works with OpenAI, Anthropic, any provider. |
 | **PII Detection** | Credit cards, SSN, email, phone, IBAN, passport, IPv4 — intercepted at runtime |
 | **Injection Detection** | 8 prompt injection + 5 SQL injection patterns blocked before they reach the model |
-| **Custom Policies** | Extend `BasePolicy` for domain-specific rules (toxicity, bias, topic restriction) |
+| **Toxicity Detection** | Profanity, slurs, hate speech, violence incitement — 3 severity tiers |
+| **REDACT Action** | Replace violations in output with `[POLICY_ID]` tokens instead of blocking |
+| **Custom Policies** | Extend `BasePolicy` for domain-specific rules (bias, topic restriction, NER) |
 | **Multi-Provider** | Same governance across OpenAI, Anthropic — swap providers without touching policy logic |
+| **Streaming Governance** | `guard.stream()` — token-by-token policy evaluation for streaming LLM calls |
+| **LangChain Integration** | `OverruleCallback` — drop-in governance for any LangChain chain or agent |
 | **Async + Sync** | `Guard` for async, `SyncGuard` for synchronous — same API surface |
 | **Decorator API** | `@guard.protect()` for function-level enforcement |
 | **Standalone Evaluation** | `guard.evaluate(text)` to scan content without making an LLM call |
+| **Policy Hot-Reload** | `guard.reload_policies()` — update policies at runtime without restart |
 
 ### For Platform Teams
 
@@ -84,6 +91,7 @@ That's it. Every call is now scanned for PII and injection attacks, violations a
 |---------|-------------|
 | **Fail-Open Architecture** | SDK errors never crash your application. Governance degrades gracefully. |
 | **Circuit Breaker** | Opens after 5 consecutive failures, 30s cooldown, automatic recovery |
+| **Dead-Letter Queue** | Failed events persisted to disk, auto-retried on next startup |
 | **Bounded Buffer** | 10K event max buffer with graceful shutdown flush |
 | **Exponential Backoff** | Jittered retry on transport failures — no thundering herd |
 | **Zero Hot-Path Latency** | Policies evaluate locally (<1ms). Telemetry ships async in background. |
@@ -206,7 +214,8 @@ asyncio.run(verify())
 │                │  │    Anthropic)  │  │   to cloud)    │
 │  PII Detection │  │                │  │                │
 │  Injection Det │  │                │  │  10K bounded   │
-│  Custom Rules  │  │                │  │  Backoff retry │
+│  Toxicity Det  │  │                │  │  Backoff retry │
+│  Custom Rules  │  │                │  │                │
 └────────────────┘  └────────────────┘  └───────┬────────┘
                                                 │
                                      ┌──────────▼──────────┐
@@ -257,6 +266,24 @@ response = await guard.chat(
     policies=["pii-detection", "injection-detection"],
     provider="openai",  # or "anthropic"
 )
+```
+
+### `guard.stream()`
+
+Streaming interception with token-by-token policy evaluation.
+
+```python
+async with Guard() as guard:
+    stream = await guard.stream(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "..."}],
+        policies=["pii-detection", "toxicity-detection"],
+        eval_interval=10,  # evaluate every N chunks
+    )
+    async for chunk in stream:
+        print(chunk, end="", flush=True)
+    # Violations detected incrementally and at completion
+    # ViolationError raised if action=BLOCK
 ```
 
 ### `guard.evaluate()`
@@ -319,14 +346,35 @@ guard.register_policy(TopicRestriction)
 |-----------|-----------------|
 | `pii-detection` | Credit cards, SSN, email, phone, IBAN, passport numbers, IPv4 addresses |
 | `injection-detection` | 8 prompt injection patterns + 5 SQL injection patterns |
+| `toxicity-detection` | Profanity, slurs, hate speech, violence incitement, dangerous instructions |
 
 ### Policy Actions
 
 | Action | Behavior |
 |--------|----------|
-| `PolicyAction.BLOCK` | Raise exception, do not execute LLM call |
-| `PolicyAction.LOG` | Log violation, continue execution |
-| `PolicyAction.PASS` | Record event, no enforcement |
+| `PolicyAction.BLOCK` | Raise `ViolationError`, halt execution |
+| `PolicyAction.LOG` | Record violation, continue execution |
+| `PolicyAction.WARN` | Log at warning level, continue execution |
+| `PolicyAction.REDACT` | Replace matched content with `[POLICY_ID]` tokens in output |
+
+### Integrations
+
+#### LangChain
+
+```python
+from overrule.integrations import OverruleCallback
+
+callback = OverruleCallback(
+    policies=["pii-detection", "injection-detection", "toxicity-detection"],
+    action=PolicyAction.BLOCK,
+    on_violation=lambda v: alert_team(v),  # optional hook
+)
+
+# Drop into any LangChain LLM
+from langchain_openai import ChatOpenAI
+llm = ChatOpenAI(model="gpt-4o", callbacks=[callback])
+result = llm.invoke("Hello world")  # automatically governed
+```
 
 ---
 
@@ -338,7 +386,7 @@ guard.register_policy(TopicRestriction)
 | Network calls on hot path | **0** |
 | Buffer capacity | **10,000 events** |
 | Flush interval | **5s** (configurable) |
-| Test suite | **78 tests passing** |
+| Test suite | **137 tests passing** |
 | Python versions | **3.10 · 3.11 · 3.12 · 3.13 · 3.14** |
 
 ---
@@ -365,7 +413,7 @@ The Overrule cloud dashboard at [overrule.dev](https://overrule.dev) provides:
 | **Event Stream** | Filterable, paginated log of every governed LLM call |
 | **Policy Metrics** | Effectiveness rates, violation counts, status per policy |
 | **API Key Management** | Create, revoke, usage tracking — plan-gated limits |
-| **Billing** | Stripe-powered subscription management with usage metering |
+| **Billing** | Subscription management with usage metering |
 | **Settings** | Webhook configuration, profile, account management |
 
 ### Plans
@@ -385,25 +433,32 @@ The Overrule cloud dashboard at [overrule.dev](https://overrule.dev) provides:
 ```
 overrule-sdk/
 ├── overrule/
-│   ├── __init__.py              # Public API (Guard, SyncGuard, PolicyAction)
-│   ├── guard.py                 # Core Guard class (async context manager)
-│   ├── sync_guard.py            # Synchronous Guard wrapper
-│   ├── config.py                # GuardConfig (env + programmatic)
-│   ├── circuit_breaker.py       # Circuit breaker (closed/open/half-open)
-│   ├── buffer.py                # Bounded event buffer (10K max)
-│   ├── transport.py             # HTTP transport (backoff, jitter, retry)
+│   ├── __init__.py              # Public API (Guard, SyncGuard, PolicyAction, policies)
+│   ├── guard.py                 # Core Guard class (async context manager, REDACT flow, streaming)
+│   ├── stream.py                # StreamGuard — token-by-token policy eval for streaming
+│   ├── sync.py                  # SyncGuard wrapper (background thread + event loop)
+│   ├── exceptions.py            # Exception hierarchy (ViolationError, TransportError, etc.)
+│   ├── logging.py               # Structured logging utilities
+│   ├── integrations/
+│   │   ├── __init__.py          # Framework integration exports
+│   │   └── langchain.py         # OverruleCallback for LangChain
 │   ├── models/
-│   │   ├── event.py             # Structured governance event
+│   │   ├── config.py            # GuardConfig + PolicyAction enum (BLOCK, LOG, WARN, REDACT)
+│   │   ├── event.py             # InterceptEvent (structured governance event)
 │   │   └── violation.py         # Violation model (policy_id, severity, direction)
 │   ├── policies/
-│   │   ├── base.py              # BasePolicy abstract class
-│   │   ├── pii.py               # PII detection (regex-based)
-│   │   └── injection.py         # Prompt + SQL injection detection
-│   └── providers/
-│       ├── openai.py            # OpenAI provider adapter
-│       └── anthropic.py         # Anthropic provider adapter
-├── tests/                       # 78 tests (pytest)
+│   │   ├── base.py              # BasePolicy abstract class + PolicyResult
+│   │   ├── registry.py          # Thread-safe PolicyRegistry
+│   │   ├── pii.py               # PII detection (7 patterns, raw_match metadata)
+│   │   ├── injection.py         # Prompt injection (8) + SQL injection (5) patterns
+│   │   └── toxicity.py          # Toxicity detection (profanity, slurs, violence, 3 tiers)
+│   └── transport/
+│       ├── reporter.py          # Async EventReporter (batching, backoff, circuit breaker)
+│       └── dead_letter.py       # Dead-letter queue (persist dropped events to disk)
+├── tests/                       # 137 tests (pytest)
+├── examples/                    # Runnable integration examples
 ├── pyproject.toml               # Build config + dependencies
+├── CHANGELOG.md                 # Version history
 └── LICENSE                      # MIT
 ```
 
@@ -437,14 +492,19 @@ overrule-sdk/
 - [x] Cloud event streaming (`POST /api/v1/events`)
 - [x] Environment-based configuration
 - [x] Published on PyPI (`pip install overrule`)
-- [x] 78-test suite (pytest)
+- [x] Toxicity detection policy (profanity, slurs, violence, 3 severity tiers)
+- [x] REDACT action (replace violations with tokens instead of blocking)
+- [x] Output policy enforcement (response scanning)
+- [x] Streaming interception (`guard.stream()` with incremental evaluation)
+- [x] LangChain integration (`OverruleCallback` drop-in handler)
+- [x] Dead-letter queue (failed events persisted to disk, auto-recovered)
+- [x] Policy hot-reload (update policies at runtime without restart)
+- [x] Credit card detection with dash/space formats
+- [x] 137-test suite (pytest)
 - [x] PEP 561 compliant (`py.typed`)
-- [ ] Streaming interception (token-by-token policy evaluation)
-- [ ] LangChain integration (`OverruleCallback`)
 - [ ] CrewAI integration (agent-level governance)
 - [ ] OpenAI Agents SDK wrapper
 - [ ] Rust core for <100μs evaluation
-- [ ] Output policy enforcement (response scanning)
 - [ ] Policy marketplace (community-contributed policies)
 
 ---
@@ -480,12 +540,35 @@ cd overrule-sdk
 pip install -e ".[dev]"
 
 # Run tests
-pytest
+pytest --cov=overrule --cov-fail-under=80
 
-# Lint + type check
+# Lint + format check
 ruff check .
+ruff format --check .
+
+# Type check (strict)
 mypy overrule/
 ```
+
+### CI/CD Pipeline
+
+Every push and PR triggers a production-grade CI pipeline:
+
+| Stage | What It Does |
+|-------|--------------|
+| **Lint** | `ruff check` + `ruff format --check` |
+| **Type Check** | `mypy` in strict mode |
+| **Security Audit** | `pip-audit` scans all dependencies for known vulnerabilities |
+| **Test** | pytest across Python 3.10–3.13 with 80% coverage gate |
+| **Build & Verify** | Builds sdist + wheel, `twine check`, install verification, 500KB size cap |
+
+**PR Quality Gates** (run on pull requests only):
+- New dependency detection with review notice
+- Debug `print()` statement detection
+- TODO/FIXME/HACK tracker
+- Secret pattern scanning (hard fail)
+- `.env` file leak detection (hard fail)
+- Version bump notification
 
 ---
 
@@ -500,13 +583,17 @@ git clone https://github.com/yourusername/overrule-sdk.git
 # Create feature branch
 git checkout -b feature/your-feature
 
-# Make changes, then
-pytest                          # Ensure tests pass
-ruff check .                    # Lint
-mypy overrule/                  # Type check
+# Make changes, then run the full CI suite locally
+pytest --cov=overrule --cov-fail-under=80   # Tests + coverage
+ruff check .                                 # Lint
+ruff format --check .                        # Format
+mypy overrule/                               # Type check
+
 git commit -m "feat: your feature description"
 git push origin feature/your-feature
 ```
+
+All PRs must pass lint, typecheck, security audit, tests (80%+ coverage), and build verification before merge.
 
 ---
 

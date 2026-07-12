@@ -1,23 +1,86 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff check
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Mypy (strict)
+        run: mypy overrule/
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pip-audit
+
+      - name: Audit dependencies
+        run: pip-audit --strict --desc on
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    needs: [lint, typecheck, security]
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -26,11 +89,119 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Lint
-        run: ruff check .
+      - name: Run tests with coverage
+        run: pytest --cov=overrule --cov-report=term-missing --cov-report=xml --cov-fail-under=80
 
-      - name: Type check
-        run: mypy overrule/
+      - name: Upload coverage
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
 
-      - name: Test
-        run: pytest --cov=overrule --cov-report=term-missing
+  build:
+    name: Build & Verify
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Verify package metadata
+        run: twine check dist/*
+
+      - name: Verify wheel installs cleanly
+        run: |
+          pip install dist/*.whl
+          python -c "import overrule; print(f'overrule {overrule.__version__} installed successfully')"
+
+      - name: Check package size
+        run: |
+          MAX_SIZE_KB=500
+          WHEEL=$(ls dist/*.whl)
+          SIZE_KB=$(du -k "$WHEEL" | cut -f1)
+          echo "Wheel size: ${SIZE_KB}KB"
+          if [ "$SIZE_KB" -gt "$MAX_SIZE_KB" ]; then
+            echo "::error::Wheel size ${SIZE_KB}KB exceeds limit of ${MAX_SIZE_KB}KB"
+            exit 1
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  pr-checks:
+    name: PR Quality Gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for new dependencies
+        run: |
+          git diff origin/main...HEAD -- pyproject.toml | grep "^+" | grep -v "^+++" | grep -E '^\+\s+"' > /tmp/new-deps.txt || true
+          if [ -s /tmp/new-deps.txt ]; then
+            echo "## New Dependencies Added" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat /tmp/new-deps.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "::notice::New dependencies detected — review for necessity and license compatibility"
+          fi
+
+      - name: Check for debug prints
+        run: |
+          PRINTS=$(grep -rn "print(" overrule/ --include="*.py" | grep -v "# noqa" || true)
+          if [ -n "$PRINTS" ]; then
+            echo "::warning::Found print() statements (use logging module instead):"
+            echo "$PRINTS"
+          fi
+
+      - name: Check for TODO/FIXME/HACK
+        run: |
+          TODOS=$(grep -rn "TODO\|FIXME\|HACK\|XXX" overrule/ tests/ --include="*.py" || true)
+          if [ -n "$TODOS" ]; then
+            echo "## Unresolved TODOs" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "$TODOS" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Verify no secrets patterns
+        run: |
+          SECRETS=$(grep -rn "sk_live_\|sk_test_\|PRIVATE_KEY\|password\s*=\s*['\"]" overrule/ tests/ --include="*.py" || true)
+          if [ -n "$SECRETS" ]; then
+            echo "::error::Potential secrets detected in source code:"
+            echo "$SECRETS"
+            exit 1
+          fi
+
+      - name: Verify no .env files committed
+        run: |
+          if find . -name ".env*" -not -path "./.venv/*" -not -name ".env.example" | grep -q .; then
+            echo "::error::Found .env files that should not be committed"
+            find . -name ".env*" -not -path "./.venv/*" -not -name ".env.example"
+            exit 1
+          fi
+
+      - name: Check version bump
+        run: |
+          OLD_VERSION=$(git show origin/main:pyproject.toml 2>/dev/null | grep '^version' | head -1 | cut -d'"' -f2 || echo "0.0.0")
+          NEW_VERSION=$(grep '^version' pyproject.toml | head -1 | cut -d'"' -f2)
+          if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
+            echo "::notice::Version bumped: $OLD_VERSION → $NEW_VERSION"
+          fi
