@@ -38,7 +38,11 @@ class InterceptEvent(BaseModel):
     input_content: str | None = None
     output_content: str | None = None
     model: str | None = None
+    provider: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     latency_ms: float | None = None
+    policies_applied: list[str] = Field(default_factory=list)
     violations: list[Violation] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

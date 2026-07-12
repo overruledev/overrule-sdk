@@ -23,7 +23,9 @@ logger = logging.getLogger("overrule.guard")
 
 F = TypeVar("F", bound=Callable[..., Any])
 
-_active_guards: list[Guard] = []
+import weakref
+
+_active_guards: list[weakref.ref[Guard]] = []
 _sync_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="overrule-sync")
 
 
@@ -31,8 +33,9 @@ def _atexit_flush() -> None:
     """Flush all active guards on process exit."""
     import asyncio
 
-    for guard in _active_guards:
-        if guard._initialized:
+    for ref in _active_guards:
+        guard = ref()
+        if guard is not None and guard._initialized:
             try:
                 loop = asyncio.new_event_loop()
                 loop.run_until_complete(guard._reporter.stop())
@@ -107,7 +110,7 @@ class Guard:
         self._initialized = False
         self._openai_client: Any = None
         self._anthropic_client: Any = None
-        _active_guards.append(self)
+        _active_guards.append(weakref.ref(self))
 
     # ─── Lifecycle ─────────────────────────────────────────────────────
 
@@ -126,8 +129,7 @@ class Guard:
         if self._anthropic_client:
             await self._anthropic_client.close()
             self._anthropic_client = None
-        if self in _active_guards:
-            _active_guards.remove(self)
+        _active_guards[:] = [r for r in _active_guards if r() is not None and r() is not self]
 
     async def __aenter__(self) -> Guard:
         await self._ensure_initialized()
@@ -141,6 +143,19 @@ class Guard:
     def register_policy(self, policy_cls: type[BasePolicy]) -> None:
         """Register a custom policy implementation."""
         self._registry.register(policy_cls)
+
+    def unregister_policy(self, policy_id: str) -> None:
+        """Remove a registered policy by ID."""
+        self._registry.unregister(policy_id)
+
+    def reload_policies(self, policy_id: str | None = None) -> None:
+        """Hot-reload policy instances without restarting the guard.
+
+        If policy_id is given, only that policy is re-instantiated.
+        If None, all cached instances are cleared and recreated on next use.
+        Useful for updating policy parameters at runtime.
+        """
+        self._registry.reload(policy_id)
 
     async def evaluate(
         self,
@@ -156,7 +171,22 @@ class Guard:
         await self._ensure_initialized()
         active_policies = policies or self._default_policies
         content = self._truncate(content)
-        return self._evaluate_content(content, active_policies, direction=direction)
+        start = time.perf_counter()
+        result = self._evaluate_content(content, active_policies, direction=direction)
+
+        status = EventStatus.BLOCKED if self._should_block(result.violations) else (
+            EventStatus.FLAGGED if result.violations else EventStatus.PASSED
+        )
+        event = self._build_event(
+            event_type=EventType.LLM_CALL,
+            status=status,
+            input_content=content,
+            policies_applied=active_policies,
+            violations=result.violations,
+            latency_ms=(time.perf_counter() - start) * 1000,
+        )
+        self._reporter.enqueue(event)
+        return result
 
     # ─── LLM Call Interception ─────────────────────────────────────────
 
@@ -179,6 +209,8 @@ class Guard:
         start = time.perf_counter()
 
         # Validate input
+        if not model:
+            raise ValueError("model must be a non-empty string")
         if not messages:
             raise ValueError("messages must be a non-empty list")
 
@@ -226,6 +258,8 @@ class Guard:
                 status=EventStatus.BLOCKED,
                 input_content=input_content,
                 model=model,
+                provider=provider,
+                policies_applied=policies,
                 violations=input_result.violations,
                 latency_ms=(time.perf_counter() - start) * 1000,
             )
@@ -255,6 +289,7 @@ class Guard:
         else:
             status = EventStatus.PASSED
 
+        usage = self._extract_usage(response)
         latency_ms = (time.perf_counter() - start) * 1000
         event = self._build_event(
             event_type=EventType.LLM_CALL,
@@ -262,6 +297,10 @@ class Guard:
             input_content=input_content,
             output_content=output_content,
             model=model,
+            provider=provider,
+            input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"),
+            policies_applied=policies,
             violations=all_violations,
             latency_ms=latency_ms,
         )
@@ -271,6 +310,83 @@ class Guard:
             raise ViolationError(output_result.violations)
 
         return response
+
+    # ─── Streaming Interception ─────────────────────────────────────────
+
+    async def stream(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        policies: list[str] | None = None,
+        provider: str = "openai",
+        eval_interval: int = 10,
+        **kwargs: Any,
+    ) -> "StreamGuard":
+        """Intercept a streaming LLM call with token-by-token policy evaluation.
+
+        Evaluates input policies before streaming starts. Output policies are
+        evaluated incrementally (every `eval_interval` chunks) and at completion.
+
+        Returns a StreamGuard async iterator that yields text chunks.
+
+        Usage:
+            async with Guard() as guard:
+                stream = await guard.stream(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": "..."}],
+                    policies=["pii-detection", "toxicity-detection"],
+                )
+                async for chunk in stream:
+                    print(chunk, end="", flush=True)
+        """
+        from overrule.stream import StreamGuard
+
+        if not model:
+            raise ValueError("model must be a non-empty string")
+        if not messages:
+            raise ValueError("messages must be a non-empty list")
+
+        await self._ensure_initialized()
+        active_policies = policies or self._default_policies
+        start = time.perf_counter()
+
+        input_content = self._extract_input(messages)
+        input_content = self._truncate(input_content)
+        input_result = self._evaluate_content(input_content, active_policies, direction="input")
+
+        if self._should_block(input_result.violations):
+            event = self._build_event(
+                event_type=EventType.LLM_CALL,
+                status=EventStatus.BLOCKED,
+                input_content=input_content,
+                model=model,
+                provider=provider,
+                policies_applied=active_policies,
+                violations=input_result.violations,
+                latency_ms=(time.perf_counter() - start) * 1000,
+                metadata={"streaming": True},
+            )
+            self._reporter.enqueue(event)
+            raise ViolationError(input_result.violations)
+
+        raw_stream = await self._call_llm_stream(
+            model=model, messages=messages, provider=provider, **kwargs
+        )
+
+        return StreamGuard(
+            raw_stream=raw_stream,
+            input_content=input_content,
+            policies=active_policies,
+            registry=self._registry,
+            reporter=self._reporter,
+            config_action=self._config.default_action,
+            model=model,
+            provider=provider,
+            fail_open=self._config.fail_open,
+            eval_interval=eval_interval,
+            start_time=start,
+        )
 
     # ─── Tool Call Protection ──────────────────────────────────────────
 
@@ -358,6 +474,7 @@ class Guard:
                 event_type=EventType.TOOL_CALL,
                 status=EventStatus.BLOCKED,
                 input_content=content,
+                policies_applied=policy_ids,
                 violations=result.violations,
                 latency_ms=(time.perf_counter() - start) * 1000,
                 metadata={"function": func.__name__},
@@ -377,6 +494,7 @@ class Guard:
             status=status,
             input_content=content,
             output_content=self._truncate(str(output)) if output is not None else None,
+            policies_applied=policy_ids,
             violations=result.violations,
             latency_ms=latency_ms,
             metadata={"function": func.__name__},
@@ -397,6 +515,8 @@ class Guard:
         for policy in policies:
             try:
                 result = policy.evaluate(content, direction=direction)
+                for v in result.violations:
+                    v.metadata["direction"] = direction
                 all_violations.extend(result.violations)
                 total_time += result.execution_time_ms
             except Exception as exc:
@@ -488,6 +608,17 @@ class Guard:
         return ""
 
     @staticmethod
+    def _extract_usage(response: dict[str, Any]) -> dict[str, int | None]:
+        """Extract token usage from an LLM response."""
+        usage = response.get("usage")
+        if not usage or not isinstance(usage, dict):
+            return {"input_tokens": None, "output_tokens": None}
+        return {
+            "input_tokens": usage.get("input_tokens") or usage.get("prompt_tokens"),
+            "output_tokens": usage.get("output_tokens") or usage.get("completion_tokens"),
+        }
+
+    @staticmethod
     def _serialize_args(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:
         """Serialize function arguments to a string for policy evaluation."""
         parts = [str(a) for a in args]
@@ -502,6 +633,10 @@ class Guard:
         input_content: str | None = None,
         output_content: str | None = None,
         model: str | None = None,
+        provider: str | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        policies_applied: list[str] | None = None,
         violations: list[Violation] | None = None,
         latency_ms: float = 0.0,
         metadata: dict[str, Any] | None = None,
@@ -513,6 +648,10 @@ class Guard:
             input_content=input_content,
             output_content=output_content,
             model=model,
+            provider=provider,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            policies_applied=policies_applied or [],
             violations=violations or [],
             latency_ms=latency_ms,
             metadata=metadata or {},
@@ -584,3 +723,55 @@ class Guard:
                 "output_tokens": response.usage.output_tokens,
             },
         }
+
+    # ─── Streaming LLM Provider Calls ────────────────────────────────────
+
+    async def _call_llm_stream(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        provider: str = "openai",
+        **kwargs: Any,
+    ) -> Any:
+        """Route streaming LLM call to the appropriate provider."""
+        if provider == "openai":
+            return await self._call_openai_stream(model=model, messages=messages, **kwargs)
+        elif provider == "anthropic":
+            return await self._call_anthropic_stream(model=model, messages=messages, **kwargs)
+        else:
+            raise ValueError(f"Unsupported provider: '{provider}'")
+
+    async def _call_openai_stream(
+        self, *, model: str, messages: list[dict[str, str]], **kwargs: Any
+    ) -> Any:
+        """Execute a streaming OpenAI chat completion."""
+        from openai import AsyncOpenAI
+
+        if self._openai_client is None:
+            self._openai_client = AsyncOpenAI()
+        return await self._openai_client.chat.completions.create(
+            model=model, messages=messages, stream=True, **kwargs  # type: ignore[arg-type]
+        )
+
+    async def _call_anthropic_stream(
+        self, *, model: str, messages: list[dict[str, str]], **kwargs: Any
+    ) -> Any:
+        """Execute a streaming Anthropic message completion."""
+        from anthropic import AsyncAnthropic
+
+        if self._anthropic_client is None:
+            self._anthropic_client = AsyncAnthropic()
+
+        system_msg = next(
+            (m["content"] for m in messages if m.get("role") == "system"), None
+        )
+        user_messages = [m for m in messages if m.get("role") != "system"]
+
+        return await self._anthropic_client.messages.create(
+            model=model,
+            messages=user_messages,  # type: ignore[arg-type]
+            system=system_msg or "",
+            max_tokens=kwargs.get("max_tokens", 4096),
+            stream=True,
+        )

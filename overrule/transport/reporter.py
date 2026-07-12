@@ -14,6 +14,7 @@ import httpx
 
 import overrule
 from overrule.models.event import InterceptEvent
+from overrule.transport.dead_letter import DeadLetterQueue
 
 logger = logging.getLogger("overrule.transport")
 
@@ -63,6 +64,9 @@ class EventReporter:
         self._consecutive_failures = 0
         self._circuit_open_until: float = 0.0
 
+        # Dead-letter queue for dropped events
+        self._dlq = DeadLetterQueue()
+
         # Metrics
         self._events_sent = 0
         self._events_dropped = 0
@@ -84,6 +88,12 @@ class EventReporter:
         )
         self._flush_lock = asyncio.Lock()
         self._running = True
+
+        # Recover dead-letter events from previous runs
+        recovered = self._dlq.recover()
+        for event in recovered:
+            self._buffer.append(event)
+
         self._flush_task = asyncio.create_task(self._flush_loop())
 
     async def stop(self) -> None:
@@ -102,7 +112,28 @@ class EventReporter:
     def enqueue(self, event: InterceptEvent) -> None:
         """Add an event to the send buffer. Non-blocking, never raises."""
         try:
-            self._buffer.append(event.model_dump(mode="json"))
+            payload = {
+                "event_type": event.event_type.value,
+                "status": event.status.value,
+                "model": event.model,
+                "provider": event.provider,
+                "input_tokens": event.input_tokens,
+                "output_tokens": event.output_tokens,
+                "latency_ms": round(event.latency_ms) if event.latency_ms else None,
+                "policies_applied": event.policies_applied,
+                "violations": [
+                    {
+                        "policy_id": v.policy_id,
+                        "severity": v.severity.value,
+                        "description": v.message,
+                        "matched_content": v.matched_content,
+                        "direction": v.metadata.get("direction", "input"),
+                    }
+                    for v in event.violations
+                ],
+                "metadata": event.metadata,
+            }
+            self._buffer.append(payload)
         except Exception:
             logger.debug("Failed to enqueue event, dropping silently")
 
@@ -154,8 +185,9 @@ class EventReporter:
                 return
 
             try:
+                clean_batch = [{k: v for k, v in e.items() if k != _RETRY_KEY} for e in batch]
                 response = await self._client.post(
-                    "/v1/events", json={"events": batch}
+                    "/v1/events", json={"events": clean_batch}
                 )
                 response.raise_for_status()
                 self._consecutive_failures = 0
@@ -183,11 +215,17 @@ class EventReporter:
                     retry_count = event.get(_RETRY_KEY, 0) + 1
                     if retry_count <= self._max_retries:
                         event[_RETRY_KEY] = retry_count
-                        self._buffer.appendleft(event)
+                        if len(self._buffer) < (self._buffer.maxlen or 10_000):
+                            self._buffer.appendleft(event)
+                        else:
+                            self._dlq.write(event)
+                            self._events_dropped += 1
                     else:
                         self._events_dropped += 1
+                        self._dlq.write(event)
                         logger.debug(
-                            "Event dropped after %d retries", self._max_retries
+                            "Event persisted to dead-letter after %d retries",
+                            self._max_retries,
                         )
 
                 needs_backoff = True
