@@ -8,6 +8,7 @@ from typing import Any
 from overrule.policies.base import BasePolicy
 from overrule.policies.injection import InjectionPolicy
 from overrule.policies.pii import PIIPolicy
+from overrule.policies.toxicity import ToxicityPolicy
 
 
 class PolicyRegistry:
@@ -27,6 +28,7 @@ class PolicyRegistry:
         """Register all built-in policies."""
         self.register(PIIPolicy)
         self.register(InjectionPolicy)
+        self.register(ToxicityPolicy)
 
     def register(self, policy_cls: type[BasePolicy]) -> None:
         """Register a policy class by its policy_id."""

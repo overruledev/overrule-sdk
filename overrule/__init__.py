@@ -33,10 +33,13 @@ from overrule.models.config import GuardConfig, PolicyAction, PolicyConfig
 from overrule.models.event import EventStatus, EventType, InterceptEvent
 from overrule.models.violation import Violation, ViolationSeverity
 from overrule.policies.base import BasePolicy, PolicyResult
+from overrule.policies.injection import InjectionPolicy
+from overrule.policies.pii import PIIPolicy
 from overrule.policies.registry import PolicyRegistry
+from overrule.policies.toxicity import ToxicityPolicy
 from overrule.sync import SyncGuard
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 __all__ = [
     # Core
@@ -52,10 +55,13 @@ __all__ = [
     "InterceptEvent",
     "EventType",
     "EventStatus",
-    # Policies (for custom policy authors)
+    # Policies
     "BasePolicy",
     "PolicyResult",
     "PolicyRegistry",
+    "PIIPolicy",
+    "InjectionPolicy",
+    "ToxicityPolicy",
     # Exceptions
     "OverruleError",
     "ViolationError",

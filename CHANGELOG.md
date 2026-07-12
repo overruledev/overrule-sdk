@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-07-12
+
+### Added
+
+- **Toxicity detection policy** (`toxicity-detection`) — detects profanity, slurs, hate speech, violence incitement, and dangerous instructions across 3 severity tiers
+- **REDACT policy action** — violations in LLM output are replaced with `[POLICY_ID]` tokens instead of blocking the response. Use `default_action=PolicyAction.REDACT` to enable
+- `ToxicityPolicy` exported from `overrule.policies` and registered as built-in
+- `PIIPolicy` and `InjectionPolicy` now exported from top-level `overrule` package
+- PII policy now stores `raw_match` in violation metadata for accurate content redaction
+- `Guard._apply_redaction()` and `Guard._replace_output()` helper methods
+
+### Changed
+
+- `PolicyAction` enum: added `REDACT` alongside `BLOCK`, `LOG`, `WARN`
+- SDK version bumped to 0.2.0
+- Test suite expanded to 101 tests (added toxicity + redact coverage)
+
 ## [0.1.1] - 2026-07-12
 
 ### Fixed

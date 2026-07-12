@@ -243,13 +243,17 @@ class Guard:
         )
 
         all_violations = input_result.violations + output_result.violations
-        status = EventStatus.PASSED
-        if all_violations:
-            status = (
-                EventStatus.BLOCKED
-                if self._should_block(output_result.violations)
-                else EventStatus.FLAGGED
-            )
+
+        if self._should_redact() and output_result.violations:
+            status = EventStatus.FLAGGED
+            redacted_output = self._apply_redaction(output_content, output_result.violations)
+            response = self._replace_output(response, redacted_output)
+        elif self._should_block(output_result.violations):
+            status = EventStatus.BLOCKED
+        elif all_violations:
+            status = EventStatus.FLAGGED
+        else:
+            status = EventStatus.PASSED
 
         latency_ms = (time.perf_counter() - start) * 1000
         event = self._build_event(
@@ -413,6 +417,26 @@ class Guard:
             return True
         return any(v.blocked for v in violations)
 
+    def _should_redact(self) -> bool:
+        """Check if the configured action is REDACT."""
+        return self._config.default_action == PolicyAction.REDACT
+
+    @staticmethod
+    def _apply_redaction(content: str, violations: list[Violation]) -> str:
+        """Replace matched violation content with redaction tokens in the output.
+
+        Uses raw_match from violation metadata if available (policies may store
+        a redacted form in matched_content for safe logging). Falls back to
+        matched_content if no raw_match is present.
+        """
+        redacted = content
+        for violation in violations:
+            raw = violation.metadata.get("raw_match") or violation.matched_content
+            if raw and raw in redacted:
+                token = f"[{violation.policy_id.upper().replace('-', '_')}]"
+                redacted = redacted.replace(raw, token, 1)
+        return redacted
+
     def _truncate(self, content: str) -> str:
         """Truncate content to configured max length."""
         max_len = self._config.max_content_length
@@ -424,6 +448,21 @@ class Guard:
             )
             return content[:max_len]
         return content
+
+    @staticmethod
+    def _replace_output(response: dict[str, Any], new_content: str) -> dict[str, Any]:
+        """Return a copy of the response with the assistant content replaced."""
+        import copy
+
+        modified = copy.deepcopy(response)
+        choices = modified.get("choices", [])
+        if choices and isinstance(choices, list):
+            first = choices[0]
+            if isinstance(first, dict):
+                message = first.get("message", {})
+                if isinstance(message, dict):
+                    message["content"] = new_content
+        return modified
 
     @staticmethod
     def _extract_input(messages: list[dict[str, str]]) -> str:

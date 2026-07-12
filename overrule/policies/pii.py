@@ -94,7 +94,11 @@ class PIIPolicy(BasePolicy):
                             severity=severity,
                             message=f"{message} in {direction}",
                             matched_content=self._redact(matched_text),
-                            metadata={"pattern": pattern_name, "direction": direction},
+                            metadata={
+                                "pattern": pattern_name,
+                                "direction": direction,
+                                "raw_match": matched_text,
+                            },
                         )
                     )
 

@@ -15,6 +15,7 @@ class PolicyAction(StrEnum):
     BLOCK = "block"
     LOG = "log"
     WARN = "warn"
+    REDACT = "redact"
 
 
 class PolicyConfig(BaseModel):
