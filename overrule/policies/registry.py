@@ -7,6 +7,7 @@ from typing import Any
 
 from overrule.policies.base import BasePolicy
 from overrule.policies.injection import InjectionPolicy
+from overrule.policies.jailbreak import JailbreakPolicy
 from overrule.policies.pii import PIIPolicy
 from overrule.policies.toxicity import ToxicityPolicy
 
@@ -29,6 +30,7 @@ class PolicyRegistry:
         self.register(PIIPolicy)
         self.register(InjectionPolicy)
         self.register(ToxicityPolicy)
+        self.register(JailbreakPolicy)
 
     def register(self, policy_cls: type[BasePolicy]) -> None:
         """Register a policy class by its policy_id."""
@@ -52,6 +54,24 @@ class PolicyRegistry:
     def resolve(self, policy_ids: list[str]) -> list[BasePolicy]:
         """Resolve a list of policy IDs to policy instances."""
         return [self.get(pid) for pid in policy_ids]
+
+    def unregister(self, policy_id: str) -> None:
+        """Remove a policy by ID. Thread-safe."""
+        with self._lock:
+            self._policies.pop(policy_id, None)
+            self._instances.pop(policy_id, None)
+
+    def reload(self, policy_id: str | None = None) -> None:
+        """Hot-reload policy instances without restarting.
+
+        If policy_id is given, only that policy is re-instantiated.
+        If None, all cached instances are cleared and recreated on next use.
+        """
+        with self._lock:
+            if policy_id:
+                self._instances.pop(policy_id, None)
+            else:
+                self._instances.clear()
 
     @property
     def available(self) -> list[str]:
