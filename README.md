@@ -99,7 +99,7 @@ That's it. Every call is now scanned for PII and injection attacks, violations a
 | **Structured Audit Trail** | Every LLM interaction logged with model, provider, tokens, latency, policies, violations |
 | **Exportable Telemetry** | Events in structured format for auditors and regulators |
 | **Runtime Enforcement** | Governance is code, not a document. Prove to regulators what's actually enforced. |
-| **Cloud Dashboard** | Visual overview at [overrule.dev](https://overrule.dev) — posture score, events, policies |
+| **Cloud Dashboard** | Visual overview at [overrule.dev](https://overrule.dev) — posture score, events, policies, billing |
 
 ---
 
@@ -117,12 +117,13 @@ pip install overrule[all]          # All providers
 ### Configuration
 
 ```bash
-export OVERRULE_API_KEY=sk_ovr_your_key_here
-export OVERRULE_ENDPOINT=https://overrule.dev/api/v1
-export OVERRULE_ENVIRONMENT=production
+export OVERRULE_API_KEY=sk_ovr_your_key_here   # from https://overrule.dev/dashboard
+export OPENAI_API_KEY=sk-...                    # your LLM provider key
 ```
 
-Or programmatic:
+That's all you need. The SDK auto-connects to `https://overrule.dev/api` and streams events to your dashboard.
+
+Or configure programmatically:
 
 ```python
 from overrule import Guard, GuardConfig
@@ -141,6 +142,29 @@ async with Guard() as guard:
         messages=[{"role": "user", "content": "Hello, what's the weather?"}],
         policies=["pii-detection", "injection-detection"],
     )
+    # ✓ Policies evaluated (<1ms)
+    # ✓ Violations blocked (if any)
+    # ✓ Event streamed to dashboard
+```
+
+### Verify Your Integration
+
+Run this after installing to confirm events reach your dashboard:
+
+```python
+python -c "
+import asyncio
+from overrule import Guard
+
+async def verify():
+    async with Guard() as guard:
+        result = await guard.evaluate('test@email.com SSN 123-45-6789', policies=['pii-detection'])
+        print(f'PII detected: {len(result.violations)} violations')
+        await guard._reporter._flush()
+        print('✓ Events sent — check https://overrule.dev/dashboard')
+
+asyncio.run(verify())
+"
 ```
 
 ### Environment Variables
@@ -148,7 +172,7 @@ async with Guard() as guard:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OVERRULE_API_KEY` | — | Your API key from [overrule.dev](https://overrule.dev) dashboard |
-| `OVERRULE_ENDPOINT` | `https://overrule.dev/api/v1` | Cloud endpoint for event ingestion |
+| `OVERRULE_ENDPOINT` | `https://overrule.dev/api` | Cloud endpoint for event ingestion |
 | `OVERRULE_ENVIRONMENT` | `production` | Environment tag on events |
 | `OVERRULE_FAIL_OPEN` | `true` | If `true`, SDK errors don't crash your app |
 | `OVERRULE_BATCH_SIZE` | `50` | Events batched before flush |
@@ -331,6 +355,31 @@ guard.register_policy(TopicRestriction)
 
 ---
 
+## Cloud Dashboard
+
+The Overrule cloud dashboard at [overrule.dev](https://overrule.dev) provides:
+
+| Feature | Description |
+|---------|-------------|
+| **Posture Score** | At-a-glance governance health metric |
+| **Event Stream** | Filterable, paginated log of every governed LLM call |
+| **Policy Metrics** | Effectiveness rates, violation counts, status per policy |
+| **API Key Management** | Create, revoke, usage tracking — plan-gated limits |
+| **Billing** | Stripe-powered subscription management with usage metering |
+| **Settings** | Webhook configuration, profile, account management |
+
+### Plans
+
+| | Free | Starter | Team | Enterprise |
+|--|:---:|:---:|:---:|:---:|
+| Events/month | 1,000 | 25,000 | 200,000 | Unlimited |
+| API keys | 10 | 25 | 100 | Unlimited |
+| Rate limit | 120/min | 500/min | 2,000/min | 10,000/min |
+| Retention | 7 days | 30 days | 90 days | 365 days |
+| Price | Free | $39/mo | $149/mo | Custom |
+
+---
+
 ## Project Structure
 
 ```
@@ -400,6 +449,26 @@ overrule-sdk/
 
 ---
 
+## Examples
+
+The `examples/` directory contains runnable scripts for common use cases:
+
+| Example | Description | Requires LLM Key |
+|---------|-------------|:---:|
+| [`quickstart.py`](examples/quickstart.py) | Full integration test — LLM call + PII + injection | Yes |
+| [`evaluate_only.py`](examples/evaluate_only.py) | Policy evaluation without LLM calls | No |
+| [`custom_policy.py`](examples/custom_policy.py) | Build your own policy (topic restriction, length limits) | No |
+| [`sync_usage.py`](examples/sync_usage.py) | Synchronous API for scripts and notebooks | No |
+
+```bash
+# Run any example
+cd overrule-sdk
+export OVERRULE_API_KEY=sk_ovr_...
+python examples/evaluate_only.py
+```
+
+---
+
 ## Development
 
 ```bash
@@ -438,6 +507,17 @@ mypy overrule/                  # Type check
 git commit -m "feat: your feature description"
 git push origin feature/your-feature
 ```
+
+---
+
+## Contact
+
+| Purpose | Email |
+|---------|-------|
+| General inquiries | hello@overrule.dev |
+| Customer support | support@overrule.dev |
+| Enterprise sales | sales@overrule.dev |
+| Founder | founders@overrule.dev |
 
 ---
 

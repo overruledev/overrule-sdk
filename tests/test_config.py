@@ -58,7 +58,7 @@ class TestOverrides:
 class TestDefaults:
     def test_default_endpoint(self) -> None:
         config = GuardConfig.from_env()
-        assert config.endpoint == "https://api.overrule.dev"
+        assert config.endpoint == "https://overrule.dev/api"
 
     def test_default_action(self) -> None:
         config = GuardConfig.from_env()

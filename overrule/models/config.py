@@ -31,7 +31,7 @@ class GuardConfig(BaseModel):
     """Top-level configuration for the Guard instance."""
 
     api_key: str | None = Field(default=None, repr=False, exclude=True)
-    endpoint: str = "https://api.overrule.dev"
+    endpoint: str = "https://overrule.dev/api"
     environment: str = "production"
     policies: list[PolicyConfig] = Field(default_factory=list)
     default_action: PolicyAction = PolicyAction.LOG
