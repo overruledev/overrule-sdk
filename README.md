@@ -96,7 +96,7 @@ That's it. Every call is now scanned for PII, injection attacks, and toxic conte
 | **Exponential Backoff** | Jittered retry on transport failures — no thundering herd |
 | **Zero Hot-Path Latency** | Policies evaluate locally (<1ms). Telemetry ships async in background. |
 | **Cloud Event Streaming** | Every governance decision streamed to Overrule dashboard in real-time |
-| **Structured Violations** | Severity-tagged (low/medium/high/critical) with full context and direction |
+| **Structured Violations** | Severity-tagged (info/low/medium/high/critical) with full context and direction |
 | **Environment Config** | `OVERRULE_API_KEY`, `OVERRULE_ENDPOINT`, `OVERRULE_FAIL_OPEN` — all env-configurable |
 
 ### For Compliance
@@ -183,7 +183,7 @@ asyncio.run(verify())
 | `OVERRULE_ENDPOINT` | `https://overrule.dev/api` | Cloud endpoint for event ingestion |
 | `OVERRULE_ENVIRONMENT` | `production` | Environment tag on events |
 | `OVERRULE_FAIL_OPEN` | `true` | If `true`, SDK errors don't crash your app |
-| `OVERRULE_BATCH_SIZE` | `50` | Events batched before flush |
+| `OVERRULE_BATCH_SIZE` | `50` | Events batched before flush (max 100) |
 | `OVERRULE_FLUSH_INTERVAL` | `5.0` | Seconds between background flushes |
 
 ---
@@ -418,13 +418,14 @@ The Overrule cloud dashboard at [overrule.dev](https://overrule.dev) provides:
 
 ### Plans
 
-| | Free | Starter | Team | Enterprise |
+| | Free | Growth | Scale | Enterprise |
 |--|:---:|:---:|:---:|:---:|
-| Events/month | 1,000 | 25,000 | 200,000 | Unlimited |
-| API keys | 10 | 25 | 100 | Unlimited |
-| Rate limit | 120/min | 500/min | 2,000/min | 10,000/min |
+| Events/month | 10,000 | 1,000,000 | 10,000,000 | Unlimited |
+| API keys | 5 | 25 | 100 | Unlimited |
+| Webhooks | 1 | 5 | 20 | Unlimited |
+| Rate limit | 200/min | 2,000/min | 10,000/min | 50,000/min |
 | Retention | 7 days | 30 days | 90 days | 365 days |
-| Price | Free | $39/mo | $149/mo | Custom |
+| Price | Free | $499/mo | $2,999/mo | Custom |
 
 ---
 
