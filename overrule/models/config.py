@@ -43,7 +43,7 @@ class GuardConfig(BaseModel):
     endpoint: str = "https://overrule.dev/api"
     environment: str = "production"
     policies: list[PolicyConfig] = Field(default_factory=list)
-    default_action: PolicyAction = PolicyAction.LOG
+    default_action: PolicyAction = PolicyAction.WARN
     fail_open: bool = True
     async_reporting: bool = True
     batch_size: int = Field(default=50, ge=1, le=100)

@@ -136,6 +136,7 @@ class InjectionPolicy(BasePolicy):
                         severity=ViolationSeverity.HIGH,
                         message=f"Prompt injection: {description}",
                         matched_content=match.group(0)[:100],
+                        blocked=True,
                         metadata={
                             "type": "prompt_injection",
                             "direction": direction,

@@ -62,7 +62,7 @@ class TestDefaults:
 
     def test_default_action(self) -> None:
         config = GuardConfig.from_env()
-        assert config.default_action == PolicyAction.LOG
+        assert config.default_action == PolicyAction.WARN
 
     def test_default_fail_open(self) -> None:
         config = GuardConfig.from_env()

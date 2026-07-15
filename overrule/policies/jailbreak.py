@@ -123,6 +123,7 @@ class JailbreakPolicy(BasePolicy):
                         severity=severity,
                         message=f"Jailbreak: {description}",
                         matched_content=match.group(0)[:120],
+                        blocked=True,
                         metadata={
                             "type": "jailbreak",
                             "direction": direction,

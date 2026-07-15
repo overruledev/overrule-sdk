@@ -104,11 +104,20 @@ class TestContentTruncation:
     def test_truncates_long_content(self, guard: Guard) -> None:
         long_content = "A" * 200_000
         truncated = guard._truncate(long_content)
-        assert len(truncated) == 100_000
+        assert len(truncated) <= 100_000
+        assert len(truncated) >= 99_000
 
     def test_preserves_short_content(self, guard: Guard) -> None:
         short = "Hello world"
         assert guard._truncate(short) == short
+
+    def test_truncation_includes_middle(self, guard: Guard) -> None:
+        """Content hidden in the middle should still be scanned."""
+        padding = "A" * 60_000
+        payload = "NEEDLE_IN_MIDDLE"
+        content = padding + payload + padding
+        truncated = guard._truncate(content)
+        assert "NEEDLE_IN_MIDDLE" in truncated
 
 
 class TestInputValidation:

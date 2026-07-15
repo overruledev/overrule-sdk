@@ -24,6 +24,10 @@ class StreamGuard:
     Evaluates policies at configurable intervals (by chunk count) during streaming,
     and performs a final full evaluation when the stream completes.
 
+    IMPORTANT: Tokens yielded before a violation is detected CANNOT be recalled.
+    For strict enforcement where no violating content may reach the user, use
+    non-streaming guard.chat() with default_action=BLOCK instead.
+
     Usage:
         async with Guard() as guard:
             stream = await guard.stream(
@@ -33,6 +37,10 @@ class StreamGuard:
             )
             async for chunk in stream:
                 print(chunk, end="", flush=True)
+
+            # After iteration completes, check for violations:
+            if stream.violations:
+                print(f"\\nWarning: {len(stream.violations)} violation(s) detected")
     """
 
     def __init__(

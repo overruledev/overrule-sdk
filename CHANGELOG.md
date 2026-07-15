@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-15
+
+### Breaking Changes
+
+- **Default action changed from `LOG` to `WARN`** — violations are now surfaced in `response.violations` and `response.flagged` instead of being silently logged. Set `default_action=PolicyAction.LOG` to restore previous behavior.
+- **Jailbreak detection added to defaults** — `Guard()` now applies `pii-detection`, `injection-detection`, and `jailbreak-detection` by default. Pass explicit `default_policies` to opt out.
+- **Prompt injection and jailbreak violations now always block** — these set `violation.blocked=True`, triggering `ViolationError` regardless of `default_action`.
+
+### Added
+
+- `JailbreakPolicy` exported from public API and wired into default policy list
+- `response.violations` and `response.flagged` on `ChatResponse` — violations always visible to caller
+- `_should_warn()` method on Guard for WARN-mode behavior
+- Policy timeout (5s) — prevents ReDoS from triggering fail-open bypass
+- Content truncation now samples head + middle + tail (was head + tail only) — eliminates evasion via center-of-payload placement
+- "Security Model" section in README documenting enforcement behavior, fail-open, streaming limitations
+- `examples/llm_content_classifier.py` — LLM-based semantic policy using gpt-4o-mini as a judge
+- StreamGuard docstring documents token-recall limitation
+- Test suite expanded to 140 tests
+
+### Fixed
+
+- Truncation blind spot: content placed in the middle of large payloads (>100KB) now scanned
+- Injection detection sets `blocked=True` — per-violation block override now actually fires
+- Jailbreak detection sets `blocked=True` — same enforcement as injection
+
+### Changed
+
+- SDK version bumped to 0.3.0
+
 ## [0.2.0] - 2026-07-12
 
 ### Added

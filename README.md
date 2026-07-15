@@ -151,8 +151,12 @@ async with Guard() as guard:
         policies=["pii-detection", "injection-detection"],
     )
     # ✓ Policies evaluated locally (sub-ms typical)
-    # ✓ Violations blocked (if any)
+    # ✓ Injection attempts blocked (raises ViolationError)
+    # ✓ Other violations surfaced in response.violations
     # ✓ Event streamed to dashboard
+
+    if response.flagged:
+        print(f"Violations: {response.violations}")
 ```
 
 ### Verify Your Integration
@@ -350,12 +354,14 @@ guard.register_policy(TopicRestriction)
 
 ### Policy Actions
 
-| Action | Behavior |
-|--------|----------|
-| `PolicyAction.BLOCK` | Raise `ViolationError`, halt execution |
-| `PolicyAction.LOG` | Record violation, continue execution |
-| `PolicyAction.WARN` | Log at warning level, continue execution |
-| `PolicyAction.REDACT` | Replace matched content with `[POLICY_ID]` tokens in output |
+| Action | Behavior | Default? |
+|--------|----------|:---:|
+| `PolicyAction.WARN` | Detect violations, surface in `response.violations`, continue execution | **Yes** |
+| `PolicyAction.BLOCK` | Raise `ViolationError`, halt execution — LLM never called on input violations | |
+| `PolicyAction.REDACT` | Replace matched content with `[POLICY_ID]` tokens in output | |
+| `PolicyAction.LOG` | Record violation silently, continue execution (telemetry only) | |
+
+**Important:** Prompt injection violations always block regardless of `default_action` (they set `violation.blocked=True`). To block on all policy violations, set `default_action=PolicyAction.BLOCK`.
 
 ### Integrations
 
@@ -386,20 +392,53 @@ result = llm.invoke("Hello world")  # automatically governed
 | Network calls on hot path | **0** |
 | Buffer capacity | **10,000 events** |
 | Flush interval | **5s** (configurable) |
-| Test suite | **137 tests passing** |
+| Test suite | **140 tests passing** |
 | Python versions | **3.10 · 3.11 · 3.12 · 3.13 · 3.14** |
 
 ---
 
-## Security
+## Security Model
+
+### Enforcement Behavior
+
+Out of the box, Overrule operates in **WARN mode**: violations are detected, logged to telemetry, and surfaced in `response.violations` — but the LLM call proceeds. This lets you integrate safely without breaking existing flows.
+
+**Exception:** Prompt injection violations always block, regardless of `default_action`. They set `violation.blocked=True`, which triggers `ViolationError` before the LLM is called.
+
+To enforce hard blocking on all violations:
+
+```python
+from overrule import Guard, PolicyAction
+
+guard = Guard(default_action=PolicyAction.BLOCK)
+```
+
+### Fail-Open Architecture
+
+By default, `fail_open=True`: if the SDK crashes during policy evaluation, the LLM call proceeds unguarded rather than failing your application. This is a deliberate availability-over-security tradeoff.
+
+For strict enforcement where governance failure = application failure:
+
+```python
+guard = Guard(fail_open=False)
+```
+
+### Streaming Limitations
+
+`guard.stream()` evaluates policies incrementally (every N chunks). Tokens yielded before a violation is detected **cannot be recalled**. For strict enforcement where no violating content may reach the user, use non-streaming `guard.chat()` with `default_action=BLOCK`.
+
+### Content Scanning
+
+Large inputs (>100KB) are sampled: head, middle, and tail windows are scanned. A `WARNING` log is emitted when truncation occurs. The sampling strategy covers all three regions to prevent evasion by placing payloads in the center.
+
+### Other Protections
 
 - API keys never exposed in `repr()`, `str()`, or serialized output
 - PII redaction shows only last 4 characters (no BIN/prefix leakage)
-- Content truncation emits a warning when policy evaluation is partial
 - Config values are bounds-validated (batch_size, flush_interval, etc.)
 - PEP 561 compliant (`py.typed` marker for downstream type checking)
-- Fail-open design ensures SDK errors never crash your application
 - No secrets in logs — all sensitive values masked in debug output
+- Policy timeout (5s) prevents ReDoS from triggering fail-open bypass
 
 ---
 

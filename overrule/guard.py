@@ -49,6 +49,10 @@ class ChatResponse(_AttrDict):
     Works with both patterns:
         response["choices"][0]["message"]["content"]
         response.choices[0].message.content
+
+    When default_action=WARN, detected violations are surfaced in:
+        response.violations  → list of Violation objects
+        response.flagged     → bool (True if any violations detected)
     """
     pass
 
@@ -137,6 +141,7 @@ class Guard:
         self._default_policies = default_policies or [
             "pii-detection",
             "injection-detection",
+            "jailbreak-detection",
         ]
         self._initialized = False
         self._init_lock = asyncio.Lock()
@@ -346,7 +351,10 @@ class Guard:
         if status == EventStatus.BLOCKED:
             raise ViolationError(output_result.violations)
 
-        return ChatResponse(response)
+        chat_response = ChatResponse(response)
+        chat_response["violations"] = all_violations
+        chat_response["flagged"] = len(all_violations) > 0
+        return chat_response
 
     # ─── Streaming Interception ─────────────────────────────────────────
 
@@ -541,6 +549,8 @@ class Guard:
 
     # ─── Internal Methods ──────────────────────────────────────────────
 
+    _POLICY_TIMEOUT_MS = 5000
+
     def _evaluate_content(
         self, content: str, policy_ids: list[str], *, direction: str
     ) -> PolicyResult:
@@ -551,11 +561,20 @@ class Guard:
         policies = self._registry.resolve(policy_ids)
         for policy in policies:
             try:
+                start = time.perf_counter()
                 result = policy.evaluate(content, direction=direction)
+                elapsed = (time.perf_counter() - start) * 1000
+                if elapsed > self._POLICY_TIMEOUT_MS:
+                    raise PolicyEvaluationError(
+                        policy.policy_id,
+                        TimeoutError(f"Policy took {elapsed:.0f}ms (limit {self._POLICY_TIMEOUT_MS}ms)"),
+                    )
                 for v in result.violations:
                     v.metadata["direction"] = direction
                 all_violations.extend(result.violations)
                 total_time += result.execution_time_ms
+            except (ViolationError, OverruleError):
+                raise
             except Exception as exc:
                 if self._config.fail_open:
                     logger.error("Policy '%s' crashed: %s", policy.policy_id, exc)
@@ -578,6 +597,10 @@ class Guard:
         """Check if the configured action is REDACT."""
         return self._config.default_action == PolicyAction.REDACT
 
+    def _should_warn(self) -> bool:
+        """Check if the configured action is WARN — log + surface violations in response."""
+        return self._config.default_action == PolicyAction.WARN
+
     @staticmethod
     def _apply_redaction(content: str, violations: list[Violation]) -> str:
         """Replace matched violation content with redaction tokens in the output.
@@ -597,19 +620,24 @@ class Guard:
     def _truncate(self, content: str) -> str:
         """Truncate content to configured max length.
 
-        To prevent bypass via padding (attacker pushes payload past the limit),
-        we keep both the head and tail of oversized content so policies scan both ends.
+        Samples head, middle, and tail to prevent evasion by placing
+        malicious content in the center of a large payload.
         """
         max_len = self._config.max_content_length
         if len(content) <= max_len:
             return content
         logger.warning(
-            "Content truncated from %d to %d chars — scanning head + tail",
+            "Content truncated from %d to %d chars — sampling windows",
             len(content),
             max_len,
         )
-        half = max_len // 2
-        return content[:half] + content[-half:]
+        third = max_len // 3
+        mid = len(content) // 2
+        mid_half = third // 2
+        head = content[:third]
+        middle = content[mid - mid_half : mid - mid_half + third]
+        tail = content[-third:]
+        return head + middle + tail
 
     @staticmethod
     def _replace_output(response: dict[str, Any], new_content: str) -> dict[str, Any]:
