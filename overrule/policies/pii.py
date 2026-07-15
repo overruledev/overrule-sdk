@@ -14,9 +14,8 @@ from overrule.policies.base import BasePolicy, PolicyResult
 _PII_PATTERNS: dict[str, tuple[re.Pattern[str], ViolationSeverity, str]] = {
     "credit_card": (
         re.compile(
-            r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|"
-            r"3(?:0[0-5]|[68][0-9])[0-9]{11}|6(?:011|5[0-9]{2})[0-9]{12}|"
-            r"(?:2131|1800|35\d{3})\d{11})\b"
+            r"\b(?:4[0-9]{3}|5[1-5][0-9]{2}|3[47][0-9]{2}|6(?:011|5[0-9]{2}))"
+            r"[-\s]?[0-9]{4}[-\s]?[0-9]{4}[-\s]?[0-9]{3,4}\b"
         ),
         ViolationSeverity.CRITICAL,
         "Credit card number detected",
@@ -97,7 +96,7 @@ class PIIPolicy(BasePolicy):
                             metadata={
                                 "pattern": pattern_name,
                                 "direction": direction,
-                                "raw_match": matched_text,
+                                "char_count": len(matched_text),
                             },
                         )
                     )

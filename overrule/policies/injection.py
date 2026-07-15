@@ -4,10 +4,27 @@ from __future__ import annotations
 
 import re
 import time
+import unicodedata
 from typing import Any
 
 from overrule.models.violation import Violation, ViolationSeverity
 from overrule.policies.base import BasePolicy, PolicyResult
+
+_ZERO_WIDTH_RE = re.compile(
+    "[​‌‍‎‏⁠⁡⁢⁣⁤"
+    "﻿­͏؜ᅟᅠ឴឵"
+    "᠎ - ‪-‮⁦-⁩￹-￻]"
+)
+
+_SQL_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def _normalize_for_scan(text: str) -> str:
+    """Strip zero-width/invisible Unicode and SQL inline comments to prevent evasion."""
+    normalized = unicodedata.normalize("NFKC", text)
+    normalized = _ZERO_WIDTH_RE.sub("", normalized)
+    normalized = _SQL_COMMENT_RE.sub(" ", normalized)
+    return normalized
 
 _PROMPT_INJECTION_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (
@@ -93,11 +110,13 @@ class InjectionPolicy(BasePolicy):
         start = time.perf_counter()
         violations: list[Violation] = []
 
+        normalized = _normalize_for_scan(content)
+
         if self._check_prompt:
-            violations.extend(self._check_prompt_injection(content, direction))
+            violations.extend(self._check_prompt_injection(normalized, direction))
 
         if self._check_sql:
-            violations.extend(self._check_sql_injection(content, direction))
+            violations.extend(self._check_sql_injection(normalized, direction))
 
         elapsed_ms = (time.perf_counter() - start) * 1000
         return PolicyResult(

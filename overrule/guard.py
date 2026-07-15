@@ -23,8 +23,10 @@ logger = logging.getLogger("overrule.guard")
 
 F = TypeVar("F", bound=Callable[..., Any])
 
+import threading
 import weakref
 
+_active_guards_lock = threading.Lock()
 _active_guards: list[weakref.ref[Guard]] = []
 _sync_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="overrule-sync")
 
@@ -33,7 +35,10 @@ def _atexit_flush() -> None:
     """Flush all active guards on process exit."""
     import asyncio
 
-    for ref in _active_guards:
+    with _active_guards_lock:
+        guards_snapshot = list(_active_guards)
+
+    for ref in guards_snapshot:
         guard = ref()
         if guard is not None and guard._initialized:
             try:
@@ -110,7 +115,8 @@ class Guard:
         self._initialized = False
         self._openai_client: Any = None
         self._anthropic_client: Any = None
-        _active_guards.append(weakref.ref(self))
+        with _active_guards_lock:
+            _active_guards.append(weakref.ref(self))
 
     # ─── Lifecycle ─────────────────────────────────────────────────────
 
@@ -129,7 +135,8 @@ class Guard:
         if self._anthropic_client:
             await self._anthropic_client.close()
             self._anthropic_client = None
-        _active_guards[:] = [r for r in _active_guards if r() is not None and r() is not self]
+        with _active_guards_lock:
+            _active_guards[:] = [r for r in _active_guards if r() is not None and r() is not self]
 
     async def __aenter__(self) -> Guard:
         await self._ensure_initialized()
@@ -558,16 +565,21 @@ class Guard:
         return redacted
 
     def _truncate(self, content: str) -> str:
-        """Truncate content to configured max length."""
+        """Truncate content to configured max length.
+
+        To prevent bypass via padding (attacker pushes payload past the limit),
+        we keep both the head and tail of oversized content so policies scan both ends.
+        """
         max_len = self._config.max_content_length
-        if len(content) > max_len:
-            logger.warning(
-                "Content truncated from %d to %d chars — policy evaluation is partial",
-                len(content),
-                max_len,
-            )
-            return content[:max_len]
-        return content
+        if len(content) <= max_len:
+            return content
+        logger.warning(
+            "Content truncated from %d to %d chars — scanning head + tail",
+            len(content),
+            max_len,
+        )
+        half = max_len // 2
+        return content[:half] + content[-half:]
 
     @staticmethod
     def _replace_output(response: dict[str, Any], new_content: str) -> dict[str, Any]:
