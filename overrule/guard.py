@@ -89,8 +89,8 @@ class Guard:
         api_key: str | None = None,
         endpoint: str | None = None,
         default_policies: list[str] | None = None,
-        default_action: PolicyAction = PolicyAction.LOG,
-        fail_open: bool = True,
+        default_action: PolicyAction | None = None,
+        fail_open: bool | None = None,
         config: GuardConfig | None = None,
     ) -> None:
         self._config = config or GuardConfig.from_env(
@@ -603,13 +603,23 @@ class Guard:
 
     @staticmethod
     def _extract_input(messages: list[dict[str, str]]) -> str:
-        """Extract evaluable content from chat messages."""
+        """Extract evaluable content from chat messages.
+
+        Handles both simple string content and OpenAI multimodal format
+        (list of {"type": "text", "text": "..."} blocks).
+        """
         parts: list[str] = []
         for msg in messages:
             if isinstance(msg, dict):
                 content = msg.get("content")
                 if content and isinstance(content, str):
                     parts.append(content)
+                elif isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            text = block.get("text", "")
+                            if text:
+                                parts.append(text)
         return "\n".join(parts)
 
     @staticmethod

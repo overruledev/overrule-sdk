@@ -41,8 +41,8 @@ class SyncGuard:
         api_key: str | None = None,
         endpoint: str | None = None,
         default_policies: list[str] | None = None,
-        default_action: PolicyAction = PolicyAction.LOG,
-        fail_open: bool = True,
+        default_action: PolicyAction | None = None,
+        fail_open: bool | None = None,
         config: GuardConfig | None = None,
     ) -> None:
         self._loop = asyncio.new_event_loop()
