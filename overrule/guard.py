@@ -27,6 +27,31 @@ F = TypeVar("F", bound=Callable[..., Any])
 import threading
 import weakref
 
+
+class _AttrDict(dict):
+    """Dict subclass allowing attribute access for dot-notation convenience."""
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            val = self[name]
+        except KeyError:
+            raise AttributeError(f"No attribute '{name}'") from None
+        if isinstance(val, dict):
+            return _AttrDict(val)
+        if isinstance(val, list):
+            return [_AttrDict(v) if isinstance(v, dict) else v for v in val]
+        return val
+
+
+class ChatResponse(_AttrDict):
+    """Response from guard.chat() — supports both dict access and attribute access.
+
+    Works with both patterns:
+        response["choices"][0]["message"]["content"]
+        response.choices[0].message.content
+    """
+    pass
+
 _active_guards_lock = threading.Lock()
 _active_guards: list[weakref.ref[Guard]] = []
 _sync_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="overrule-sync")
@@ -321,7 +346,7 @@ class Guard:
         if status == EventStatus.BLOCKED:
             raise ViolationError(output_result.violations)
 
-        return response
+        return ChatResponse(response)
 
     # ─── Streaming Interception ─────────────────────────────────────────
 

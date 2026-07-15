@@ -71,13 +71,13 @@ That's it. Every call is now scanned for PII, injection attacks, and toxic conte
 
 | Feature | Description |
 |---------|-------------|
-| **1-Line Integration** | Wrap any LLM call with `guard.chat()`. Works with OpenAI, Anthropic, any provider. |
+| **1-Line Integration** | Wrap any LLM call with `guard.chat()`. Works with OpenAI and Anthropic today, more providers coming. |
 | **PII Detection** | Credit cards, SSN, email, phone, IBAN, passport, IPv4 — intercepted at runtime |
 | **Injection Detection** | 8 prompt injection + 5 SQL injection patterns blocked before they reach the model |
 | **Toxicity Detection** | Profanity, slurs, hate speech, violence incitement — 3 severity tiers |
 | **REDACT Action** | Replace violations in output with `[POLICY_ID]` tokens instead of blocking |
 | **Custom Policies** | Extend `BasePolicy` for domain-specific rules (bias, topic restriction, NER) |
-| **Multi-Provider** | Same governance across OpenAI, Anthropic — swap providers without touching policy logic |
+| **Multi-Provider** | Same governance across OpenAI and Anthropic — swap providers without touching policy logic |
 | **Streaming Governance** | `guard.stream()` — token-by-token policy evaluation for streaming LLM calls |
 | **LangChain Integration** | `OverruleCallback` — drop-in governance for any LangChain chain or agent |
 | **Async + Sync** | `Guard` for async, `SyncGuard` for synchronous — same API surface |
@@ -94,8 +94,8 @@ That's it. Every call is now scanned for PII, injection attacks, and toxic conte
 | **Dead-Letter Queue** | Failed events persisted to disk, auto-retried on next startup |
 | **Bounded Buffer** | 10K event max buffer with graceful shutdown flush |
 | **Exponential Backoff** | Jittered retry on transport failures — no thundering herd |
-| **Zero Hot-Path Latency** | Policies evaluate locally (<1ms). Telemetry ships async in background. |
-| **Cloud Event Streaming** | Every governance decision streamed to Overrule dashboard in real-time |
+| **Minimal Hot-Path Latency** | Policies evaluate locally (<1ms typical prompts, ~30ms on 100KB inputs). Telemetry ships async in background. |
+| **Cloud Event Streaming** | Governance metadata streamed to Overrule dashboard in real-time (prompts/completions stay local) |
 | **Structured Violations** | Severity-tagged (info/low/medium/high/critical) with full context and direction |
 | **Environment Config** | `OVERRULE_API_KEY`, `OVERRULE_ENDPOINT`, `OVERRULE_FAIL_OPEN` — all env-configurable |
 
@@ -104,8 +104,8 @@ That's it. Every call is now scanned for PII, injection attacks, and toxic conte
 | Feature | Description |
 |---------|-------------|
 | **EU AI Act Articles 13/14/15** | Maps directly to logging, oversight, and accuracy requirements |
-| **Structured Audit Trail** | Every LLM interaction logged with model, provider, tokens, latency, policies, violations |
-| **Exportable Telemetry** | Events in structured format for auditors and regulators |
+| **Structured Audit Trail** | Every LLM interaction logged with metadata (model, provider, tokens, latency, policies, violations). Prompts and completions never leave your infrastructure. |
+| **Exportable Telemetry** | Metadata + violation evidence in structured format for auditors and regulators |
 | **Runtime Enforcement** | Governance is code, not a document. Prove to regulators what's actually enforced. |
 | **Cloud Dashboard** | Visual overview at [overrule.dev](https://overrule.dev) — posture score, events, policies, billing |
 
@@ -150,7 +150,7 @@ async with Guard() as guard:
         messages=[{"role": "user", "content": "Hello, what's the weather?"}],
         policies=["pii-detection", "injection-detection"],
     )
-    # ✓ Policies evaluated (<1ms)
+    # ✓ Policies evaluated locally (sub-ms typical)
     # ✓ Violations blocked (if any)
     # ✓ Event streamed to dashboard
 ```
@@ -382,7 +382,7 @@ result = llm.invoke("Hello world")  # automatically governed
 
 | Metric | Value |
 |--------|-------|
-| Policy evaluation | **<1ms** |
+| Policy evaluation | **<1ms** typical, ~30ms on 100KB inputs |
 | Network calls on hot path | **0** |
 | Buffer capacity | **10,000 events** |
 | Flush interval | **5s** (configurable) |

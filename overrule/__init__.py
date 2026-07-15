@@ -28,7 +28,7 @@ from overrule.exceptions import (
     TransportError,
     ViolationError,
 )
-from overrule.guard import Guard
+from overrule.guard import ChatResponse, Guard
 from overrule.models.config import GuardConfig, PolicyAction, PolicyConfig
 from overrule.models.event import EventStatus, EventType, InterceptEvent
 from overrule.models.violation import Violation, ViolationSeverity
@@ -46,6 +46,7 @@ __version__ = "0.2.0"
 __all__ = [
     # Core
     "Guard",
+    "ChatResponse",
     "SyncGuard",
     "StreamGuard",
     # Configuration

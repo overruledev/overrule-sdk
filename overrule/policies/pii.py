@@ -9,8 +9,30 @@ from typing import Any
 from overrule.models.violation import Violation, ViolationSeverity
 from overrule.policies.base import BasePolicy, PolicyResult
 
+
+def _luhn_check(number: str) -> bool:
+    """Validate a card number using the Luhn algorithm."""
+    digits = [int(d) for d in number if d.isdigit()]
+    if len(digits) < 13 or len(digits) > 19:
+        return False
+    checksum = 0
+    for i, d in enumerate(reversed(digits)):
+        if i % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        checksum += d
+    return checksum % 10 == 0
+
+
+# Context patterns that indicate an IP-like string is actually a version number.
+_VERSION_CONTEXT_RE = re.compile(
+    r"(?:v(?:ersion)?|release|build|update)[\s:=]*$|"
+    r"^\s*[-/]",
+    re.I,
+)
+
 # Precompiled regex patterns for PII detection.
-# Patterns are intentionally strict to minimize false positives in production.
 _PII_PATTERNS: dict[str, tuple[re.Pattern[str], ViolationSeverity, str]] = {
     "credit_card": (
         re.compile(
@@ -32,13 +54,13 @@ _PII_PATTERNS: dict[str, tuple[re.Pattern[str], ViolationSeverity, str]] = {
     ),
     "phone_us": (
         re.compile(
-            r"(?:\+1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?[2-9]\d{2}[-.\s]?\d{4}"
+            r"(?<!\d)(?:\+1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?[2-9]\d{2}[-.\s]?\d{4}(?!\d)"
         ),
         ViolationSeverity.MEDIUM,
         "US phone number detected",
     ),
     "phone_international": (
-        re.compile(r"\+[1-9]\d{0,2}[-.\s]?\d{1,4}[-.\s]?\d{3,5}[-.\s]?\d{3,5}"),
+        re.compile(r"(?<!\d)\+[1-9]\d{0,2}[-.\s]?\d{1,4}[-.\s]?\d{3,5}[-.\s]?\d{3,5}(?!\d)"),
         ViolationSeverity.MEDIUM,
         "International phone number detected",
     ),
@@ -83,24 +105,26 @@ class PIIPolicy(BasePolicy):
         violations: list[Violation] = []
 
         for pattern_name, (pattern, severity, message) in self._enabled_patterns.items():
-            matches = pattern.findall(content)
-            if matches:
-                for match in matches:
-                    matched_text = match if isinstance(match, str) else match[0]
-                    violations.append(
-                        Violation(
-                            policy_id=self.policy_id,
-                            severity=severity,
-                            message=f"{message} in {direction}",
-                            matched_content=self._redact(matched_text),
-                            metadata={
-                                "pattern": pattern_name,
-                                "direction": direction,
-                                "char_count": len(matched_text),
-                                "raw_match": matched_text,
-                            },
-                        )
+            for match in pattern.finditer(content):
+                matched_text = match.group(0)
+
+                if not self._validate_match(pattern_name, matched_text, content, match.start()):
+                    continue
+
+                violations.append(
+                    Violation(
+                        policy_id=self.policy_id,
+                        severity=severity,
+                        message=f"{message} in {direction}",
+                        matched_content=self._redact(matched_text),
+                        metadata={
+                            "pattern": pattern_name,
+                            "direction": direction,
+                            "char_count": len(matched_text),
+                            "raw_match": matched_text,
+                        },
                     )
+                )
 
         elapsed_ms = (time.perf_counter() - start) * 1000
         return PolicyResult(
@@ -108,6 +132,24 @@ class PIIPolicy(BasePolicy):
             violations=violations,
             execution_time_ms=elapsed_ms,
         )
+
+    @staticmethod
+    def _validate_match(pattern_name: str, matched_text: str, content: str, start_pos: int) -> bool:
+        """Post-match validation to reduce false positives."""
+        if pattern_name == "credit_card":
+            return _luhn_check(matched_text)
+
+        if pattern_name == "ip_address":
+            # Reject if preceded by version-like context
+            prefix = content[max(0, start_pos - 20):start_pos]
+            if _VERSION_CONTEXT_RE.search(prefix):
+                return False
+            # Reject if followed by another dot-separated segment (looks like a version)
+            end_pos = start_pos + len(matched_text)
+            if end_pos < len(content) and content[end_pos] == ".":
+                return False
+
+        return True
 
     @staticmethod
     def _redact(value: str) -> str:
