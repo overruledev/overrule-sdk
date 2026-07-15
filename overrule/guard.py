@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import atexit
 import functools
 import inspect
@@ -113,6 +114,7 @@ class Guard:
             "injection-detection",
         ]
         self._initialized = False
+        self._init_lock = asyncio.Lock()
         self._openai_client: Any = None
         self._anthropic_client: Any = None
         with _active_guards_lock:
@@ -121,9 +123,12 @@ class Guard:
     # ─── Lifecycle ─────────────────────────────────────────────────────
 
     async def _ensure_initialized(self) -> None:
-        if not self._initialized:
-            await self._reporter.start()
-            self._initialized = True
+        if self._initialized:
+            return
+        async with self._init_lock:
+            if not self._initialized:
+                await self._reporter.start()
+                self._initialized = True
 
     async def shutdown(self) -> None:
         """Gracefully shut down the guard, flushing pending events."""
@@ -632,9 +637,23 @@ class Guard:
 
     @staticmethod
     def _serialize_args(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:
-        """Serialize function arguments to a string for policy evaluation."""
-        parts = [str(a) for a in args]
-        parts.extend(f"{k}={v}" for k, v in kwargs.items())
+        """Serialize function arguments to a string for policy evaluation.
+
+        Only serializes str/int/float/bool/list/dict primitives.
+        Non-primitive objects are represented by their type name to prevent
+        accidental leakage of credentials or connection strings via __str__.
+        """
+        def _safe_repr(obj: Any) -> str:
+            if isinstance(obj, (str, int, float, bool)):
+                return str(obj)
+            if isinstance(obj, (list, tuple)):
+                return " ".join(_safe_repr(item) for item in obj)
+            if isinstance(obj, dict):
+                return " ".join(f"{k}={_safe_repr(v)}" for k, v in obj.items())
+            return f"<{type(obj).__name__}>"
+
+        parts = [_safe_repr(a) for a in args]
+        parts.extend(f"{k}={_safe_repr(v)}" for k, v in kwargs.items())
         return " ".join(parts)
 
     @staticmethod

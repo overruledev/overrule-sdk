@@ -26,7 +26,7 @@ _PII_PATTERNS: dict[str, tuple[re.Pattern[str], ViolationSeverity, str]] = {
         "Social Security Number detected",
     ),
     "email": (
-        re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"),
+        re.compile(r"\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,3}\.[A-Za-z]{2,12}\b"),
         ViolationSeverity.MEDIUM,
         "Email address detected",
     ),
@@ -97,6 +97,7 @@ class PIIPolicy(BasePolicy):
                                 "pattern": pattern_name,
                                 "direction": direction,
                                 "char_count": len(matched_text),
+                                "raw_match": matched_text,
                             },
                         )
                     )
