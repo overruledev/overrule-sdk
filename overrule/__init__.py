@@ -37,7 +37,9 @@ from overrule.policies.injection import InjectionPolicy
 from overrule.policies.pii import PIIPolicy
 from overrule.policies.registry import PolicyRegistry
 from overrule.policies.toxicity import ToxicityPolicy
+from overrule.stream import StreamGuard
 from overrule.sync import SyncGuard
+from overrule.transport.dead_letter import DeadLetterQueue
 
 __version__ = "0.2.0"
 
@@ -45,6 +47,7 @@ __all__ = [
     # Core
     "Guard",
     "SyncGuard",
+    "StreamGuard",
     # Configuration
     "GuardConfig",
     "PolicyConfig",
@@ -62,6 +65,8 @@ __all__ = [
     "PIIPolicy",
     "InjectionPolicy",
     "ToxicityPolicy",
+    # Transport
+    "DeadLetterQueue",
     # Exceptions
     "OverruleError",
     "ViolationError",

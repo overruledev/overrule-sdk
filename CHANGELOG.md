@@ -9,18 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Streaming interception** (`guard.stream()`) — token-by-token policy evaluation for streaming LLM responses with configurable eval interval
+- **LangChain integration** (`OverruleCallback`) — drop-in callback handler for automatic governance on any LangChain chain, agent, or LLM call
+- **Dead-letter queue** — failed events persisted to disk (`.overrule/dead_letter.jsonl`), auto-recovered on next startup
+- **Policy hot-reload** (`guard.reload_policies()`) — re-instantiate policy instances at runtime without restarting
 - **Toxicity detection policy** (`toxicity-detection`) — detects profanity, slurs, hate speech, violence incitement, and dangerous instructions across 3 severity tiers
-- **REDACT policy action** — violations in LLM output are replaced with `[POLICY_ID]` tokens instead of blocking the response. Use `default_action=PolicyAction.REDACT` to enable
+- **REDACT policy action** — violations in LLM output are replaced with `[POLICY_ID]` tokens instead of blocking the response
+- `StreamGuard` async iterator with incremental evaluation and final full-pass
+- `guard.unregister_policy()` for dynamic policy management
 - `ToxicityPolicy` exported from `overrule.policies` and registered as built-in
-- `PIIPolicy` and `InjectionPolicy` now exported from top-level `overrule` package
 - PII policy now stores `raw_match` in violation metadata for accurate content redaction
-- `Guard._apply_redaction()` and `Guard._replace_output()` helper methods
 
 ### Changed
 
 - `PolicyAction` enum: added `REDACT` alongside `BLOCK`, `LOG`, `WARN`
+- Credit card detection now matches dash-separated and space-separated formats
 - SDK version bumped to 0.2.0
-- Test suite expanded to 101 tests (added toxicity + redact coverage)
+- Test suite expanded to 137 tests
+
+### Fixed
+
+- Credit card regex now correctly detects `4111-1111-1111-1111` and `4111 1111 1111 1111` formats (previously only matched continuous digits)
 
 ## [0.1.1] - 2026-07-12
 
@@ -44,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PII detection policy (credit cards, SSN, email, phone, IPv4, IBAN, passport)
 - Injection detection policy (8 prompt injection + 5 SQL injection patterns)
 - Thread-safe `PolicyRegistry` with custom policy support via `BasePolicy` ABC
-- Async batched `EventReporter` with exponential backoff, circuit breaker, dead-letter drop
+- Async batched `EventReporter` with exponential backoff, circuit breaker, bounded buffer
 - `OVERRULE_*` environment variable configuration (12-factor compatible)
 - Multi-provider LLM support (OpenAI + Anthropic) with cached async clients
 - `@guard.protect()` decorator for tool/function governance

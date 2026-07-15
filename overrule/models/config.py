@@ -38,7 +38,7 @@ class GuardConfig(BaseModel):
     default_action: PolicyAction = PolicyAction.LOG
     fail_open: bool = True
     async_reporting: bool = True
-    batch_size: int = Field(default=50, ge=1, le=10_000)
+    batch_size: int = Field(default=50, ge=1, le=100)
     flush_interval_seconds: float = Field(default=5.0, ge=0.1, le=300.0)
     max_content_length: int = Field(default=100_000, ge=1_000, le=10_000_000)
     max_retries: int = Field(default=3, ge=0, le=10)
