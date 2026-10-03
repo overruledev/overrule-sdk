@@ -7,9 +7,11 @@ import time
 from typing import Any
 
 from overrule.models.violation import Violation, ViolationSeverity
+from overrule.policies._normalize import MAX_MATCHES_PER_PATTERN
 from overrule.policies.base import BasePolicy, PolicyResult
 
-_SEVERITY_HIGH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+#: Gated by ``check_violence``. Reported as CRITICAL.
+_VIOLENCE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (
         re.compile(
             r"\b(?:kill\s+(?:your(?:self|selves)?|him|her|them|myself)|"
@@ -31,7 +33,8 @@ _SEVERITY_HIGH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
 ]
 
-_SEVERITY_MEDIUM_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+#: Gated by ``check_profanity``. Reported as HIGH.
+_PROFANITY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (
         re.compile(
             r"\b(?:fuck\s*(?:ing|ed)?(?:\s+you|\s+off)?|"
@@ -45,6 +48,10 @@ _SEVERITY_MEDIUM_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         ),
         "Profanity detected",
     ),
+]
+
+#: Gated by ``check_slurs``. Reported as HIGH.
+_SLUR_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (
         re.compile(
             r"\b(?:retard(?:ed)?|"
@@ -61,7 +68,8 @@ _SEVERITY_MEDIUM_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
 ]
 
-_SEVERITY_LOW_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+#: Gated by ``check_insults``. Reported as LOW.
+_MILD_INSULT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (
         re.compile(
             r"\b(?:idiot|moron|stupid|dumb|loser|"
@@ -76,16 +84,35 @@ _SEVERITY_LOW_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 class ToxicityPolicy(BasePolicy):
     """Detects toxic, abusive, and harmful content across severity levels.
 
-    Severity levels:
-        - CRITICAL: Violence incitement, self-harm encouragement, dangerous instructions
-        - HIGH: Slurs, hate speech, severe profanity
-        - LOW: Mild insults, dismissive language
+    Each ``check_*`` flag gates exactly the category it is named after, and each
+    category maps to one severity:
+
+    ==================  ==========  ================================================
+    Flag                Severity    Content
+    ==================  ==========  ================================================
+    ``check_violence``  CRITICAL    Violence incitement, self-harm, dangerous how-tos
+    ``check_slurs``     HIGH        Slurs and hate speech
+    ``check_profanity`` HIGH        Severe profanity
+    ``check_insults``   LOW         Mild insults, dismissive language
+    ==================  ==========  ================================================
+
+    There is deliberately no MEDIUM tier: profanity and slurs are both reported as
+    HIGH, they are simply gated independently.
 
     Configuration:
-        - min_severity: Minimum severity to flag (default: "low")
-        - check_profanity: Whether to check for profanity (default: True)
-        - check_slurs: Whether to check for slurs/hate speech (default: True)
-        - check_violence: Whether to check for violence/self-harm (default: True)
+        - min_severity: Minimum severity to flag (default: "low", i.e. report everything)
+        - check_violence: Check for violence/self-harm (default: True)
+        - check_slurs: Check for slurs/hate speech (default: True)
+        - check_profanity: Check for severe profanity (default: True)
+        - check_insults: Check for mild insults (default: True)
+
+    .. versionchanged:: 0.4.0
+        ``check_slurs`` used to gate profanity *and* slurs together, and
+        ``check_profanity`` used to gate the mild-insult tier rather than profanity —
+        so ``check_profanity=False`` did not turn off profanity detection. The flags now
+        match their names. Defaults are unchanged, so behaviour only differs if you set
+        one of them to ``False``; use ``check_insults=False`` for what
+        ``check_profanity=False`` used to do.
     """
 
     policy_id = "toxicity-detection"
@@ -93,37 +120,24 @@ class ToxicityPolicy(BasePolicy):
 
     def __init__(self, parameters: dict[str, Any] | None = None) -> None:
         super().__init__(parameters)
-        self._check_profanity = self._parameters.get("check_profanity", True)
-        self._check_slurs = self._parameters.get("check_slurs", True)
         self._check_violence = self._parameters.get("check_violence", True)
-        self._min_severity = ViolationSeverity(
-            self._parameters.get("min_severity", "low")
-        )
+        self._check_slurs = self._parameters.get("check_slurs", True)
+        self._check_profanity = self._parameters.get("check_profanity", True)
+        self._check_insults = self._parameters.get("check_insults", True)
+        self._min_severity = ViolationSeverity(self._parameters.get("min_severity", "low"))
 
     def evaluate(self, content: str, *, direction: str = "input") -> PolicyResult:
         start = time.perf_counter()
         violations: list[Violation] = []
 
-        if self._check_violence:
-            violations.extend(
-                self._scan_patterns(
-                    content, _SEVERITY_HIGH_PATTERNS, ViolationSeverity.CRITICAL, direction
-                )
-            )
-
-        if self._check_slurs:
-            violations.extend(
-                self._scan_patterns(
-                    content, _SEVERITY_MEDIUM_PATTERNS, ViolationSeverity.HIGH, direction
-                )
-            )
-
-        if self._check_profanity:
-            violations.extend(
-                self._scan_patterns(
-                    content, _SEVERITY_LOW_PATTERNS, ViolationSeverity.LOW, direction
-                )
-            )
+        for enabled, patterns, severity in (
+            (self._check_violence, _VIOLENCE_PATTERNS, ViolationSeverity.CRITICAL),
+            (self._check_slurs, _SLUR_PATTERNS, ViolationSeverity.HIGH),
+            (self._check_profanity, _PROFANITY_PATTERNS, ViolationSeverity.HIGH),
+            (self._check_insults, _MILD_INSULT_PATTERNS, ViolationSeverity.LOW),
+        ):
+            if enabled:
+                violations.extend(self._scan_patterns(content, patterns, severity, direction))
 
         violations = self._filter_by_severity(violations)
 
@@ -143,23 +157,37 @@ class ToxicityPolicy(BasePolicy):
     ) -> list[Violation]:
         violations: list[Violation] = []
         for pattern, description in patterns:
-            match = pattern.search(content)
-            if match:
-                violations.append(
+            # finditer, not search: every occurrence must become a violation or
+            # REDACT (which replaces per violation) leaves later copies verbatim.
+            # The cap counts *reported* violations, matching pii.py. There is no
+            # refine step here so the two are currently identical, but counting
+            # candidates is the idiom that let decoys disable PII detection.
+            reported: list[Violation] = []
+            for match in pattern.finditer(content):
+                if len(reported) >= MAX_MATCHES_PER_PATTERN:
+                    break
+                raw = match.group(0)
+                reported.append(
                     Violation(
                         policy_id=self.policy_id,
                         severity=severity,
                         message=f"Toxicity: {description}",
-                        matched_content=match.group(0)[:80],
-                        metadata={"type": "toxicity", "direction": direction},
+                        matched_content=raw[:80],
+                        metadata={
+                            "type": "toxicity",
+                            "pattern": description,
+                            "direction": direction,
+                            "char_count": len(raw),
+                            # Full, untruncated match: REDACT prefers this over
+                            # the truncated matched_content.
+                            "raw_match": raw,
+                        },
                     )
                 )
+            violations.extend(reported)
         return violations
 
     def _filter_by_severity(self, violations: list[Violation]) -> list[Violation]:
         severity_order = list(ViolationSeverity)
         min_index = severity_order.index(self._min_severity)
-        return [
-            v for v in violations
-            if severity_order.index(v.severity) <= min_index
-        ]
+        return [v for v in violations if severity_order.index(v.severity) <= min_index]

@@ -45,8 +45,7 @@ class PolicyRegistry:
             if policy_id not in self._instances:
                 if policy_id not in self._policies:
                     raise ValueError(
-                        f"Unknown policy: '{policy_id}'. "
-                        f"Available: {list(self._policies.keys())}"
+                        f"Unknown policy: '{policy_id}'. Available: {list(self._policies.keys())}"
                     )
                 self._instances[policy_id] = self._policies[policy_id](parameters)
             return self._instances[policy_id]

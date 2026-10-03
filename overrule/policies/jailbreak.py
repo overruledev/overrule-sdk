@@ -7,12 +7,27 @@ import time
 from typing import Any
 
 from overrule.models.violation import Violation, ViolationSeverity
+from overrule.policies._normalize import (
+    MAX_MATCHES_PER_PATTERN,
+    SEP,
+    collect_matches,
+    normalize_variants,
+)
 from overrule.policies.base import BasePolicy, PolicyResult
 
 _JAILBREAK_PATTERNS: list[tuple[re.Pattern[str], str, ViolationSeverity]] = [
     (
         re.compile(
-            r"(?:DAN|Do\s+Anything\s+Now|Developer\s+Mode|STAN|DUDE)\s*(?:mode|prompt|enabled)",
+            # "do anything now" spelled out is unambiguous on its own.
+            rf"\bdo{SEP}anything{SEP}now\b"
+            # Persona + activation keyword, case-insensitive.
+            # {1,2} so "DAN mode enabled" is consumed whole, which makes
+            # metadata["raw_match"] usable for redaction.
+            rf"|\b(?:dan|stan|dude|aim)"
+            rf"(?:{SEP}(?:mode|prompt|enabled|activated|unlocked)){{1,2}}\b"
+            # Bare persona token only when written in caps, so the ordinary
+            # words/names "dan" and "dude" do not trigger a violation.
+            rf"|(?-i:\b(?:DAN|D\.A\.N\.?|STAN)\b)",
             re.I,
         ),
         "Known jailbreak persona activation (DAN/STAN/DUDE)",
@@ -20,8 +35,19 @@ _JAILBREAK_PATTERNS: list[tuple[re.Pattern[str], str, ViolationSeverity]] = [
     ),
     (
         re.compile(
-            r"(?:from\s+now\s+on|henceforth|going\s+forward)\s*,?\s*"
-            r"(?:you\s+(?:will|must|should|can)|ignore|forget|disregard)",
+            # An activation keyword is required: bare "dev mode" is ordinary
+            # software vocabulary and would be a false positive.
+            rf"\b(?:developer|dev)[\s\-_.]?mode\b{SEP}"
+            rf"(?:enabled?|on|activated?|output|unlocked|prompt|jailbreak)\b",
+            re.I,
+        ),
+        "Developer Mode jailbreak activation",
+        ViolationSeverity.HIGH,
+    ),
+    (
+        re.compile(
+            rf"(?:from{SEP}now{SEP}on|henceforth|going{SEP}forward){SEP}?"
+            rf"(?:you{SEP}(?:will|must|should|can)|ignore|forget|disregard)",
             re.I,
         ),
         "Temporal reset jailbreak attempt",
@@ -29,8 +55,11 @@ _JAILBREAK_PATTERNS: list[tuple[re.Pattern[str], str, ViolationSeverity]] = [
     ),
     (
         re.compile(
-            r"(?:hypothetical(?:ly)?|fictional|in\s+a\s+(?:story|novel|movie))\s*"
-            r"(?:scenario|situation|world|context)\s*(?:where|in\s+which)",
+            # The trailing "where"/"in which" clause is now optional — the
+            # classic "in a hypothetical scenario, ..." omits it.
+            rf"(?:hypothetical(?:ly)?|fictional|imaginary|make[\s\-]?believe){SEP}"
+            rf"(?:scenario|situation|world|context|setting|story|universe|roleplay)"
+            rf"|in{SEP}a{SEP}(?:story|novel|movie|film|screenplay|game|play){SEP}where",
             re.I,
         ),
         "Fictional framing bypass",
@@ -38,8 +67,9 @@ _JAILBREAK_PATTERNS: list[tuple[re.Pattern[str], str, ViolationSeverity]] = [
     ),
     (
         re.compile(
-            r"(?:translate|encode|convert|write)\s+(?:this|the\s+following|it)\s+"
-            r"(?:in|into|to|using)\s+(?:base64|hex|rot13|binary|morse|pig\s*latin|leetspeak|reversed)",
+            rf"(?:translate|encode|convert|write){SEP}(?:this|the{SEP}following|it){SEP}"
+            rf"(?:in|into|to|using){SEP}"
+            rf"(?:base64|hex|rot13|binary|morse|pig{SEP}?latin|leetspeak|reversed)",
             re.I,
         ),
         "Encoding-based evasion attempt",
@@ -47,8 +77,9 @@ _JAILBREAK_PATTERNS: list[tuple[re.Pattern[str], str, ViolationSeverity]] = [
     ),
     (
         re.compile(
-            r"(?:opposite\s+day|opposite\s+mode|reverse\s+(?:mode|psychology))\s*"
-            r"|(?:when\s+I\s+say\s+(?:yes|no|good|bad)\s*,?\s*(?:I\s+(?:actually\s+)?mean|it\s+means))",
+            rf"(?:opposite{SEP}day|opposite{SEP}mode|reverse{SEP}(?:mode|psychology))"
+            rf"|(?:when{SEP}I{SEP}say{SEP}(?:yes|no|good|bad){SEP}?"
+            rf"(?:I{SEP}(?:actually{SEP})?mean|it{SEP}means))",
             re.I,
         ),
         "Semantic inversion trick",
@@ -56,10 +87,11 @@ _JAILBREAK_PATTERNS: list[tuple[re.Pattern[str], str, ViolationSeverity]] = [
     ),
     (
         re.compile(
-            r"(?:as\s+(?:a|an)\s+(?:AI|language\s+model|assistant)\s*,?\s*"
-            r"you\s+(?:should|must|need\s+to|have\s+to)\s+(?:be\s+able\s+to|always))"
-            r"|(?:your\s+(?:training|guidelines|rules|restrictions)\s+"
-            r"(?:are|were)\s+(?:wrong|outdated|incorrect|flawed))",
+            rf"(?:as{SEP}(?:a|an){SEP}(?:AI|language{SEP}model|assistant){SEP}?"
+            rf"you{SEP}(?:should|must|need{SEP}to|have{SEP}to){SEP}"
+            rf"(?:be{SEP}able{SEP}to|always))"
+            rf"|(?:your{SEP}(?:training|guidelines|rules|restrictions){SEP}"
+            rf"(?:are|were){SEP}(?:wrong|outdated|incorrect|flawed))",
             re.I,
         ),
         "Authority challenge / training dismissal",
@@ -67,8 +99,8 @@ _JAILBREAK_PATTERNS: list[tuple[re.Pattern[str], str, ViolationSeverity]] = [
     ),
     (
         re.compile(
-            r"(?:multi[-\s]?turn|previous\s+(?:messages?|context|conversation))\s*"
-            r"(?:established|confirmed|proved|showed)\s+(?:that|you)",
+            rf"(?:multi[-\s]?turn|previous{SEP}(?:messages?|context|conversation)){SEP}"
+            rf"(?:established|confirmed|proved|showed){SEP}(?:that|you)",
             re.I,
         ),
         "Multi-turn manipulation (false consensus)",
@@ -76,9 +108,9 @@ _JAILBREAK_PATTERNS: list[tuple[re.Pattern[str], str, ViolationSeverity]] = [
     ),
     (
         re.compile(
-            r"(?:token\s+smuggling|payload\s+splitting|"
-            r"invisible\s+(?:text|characters?|unicode)|"
-            r"zero[-\s]?width\s+(?:space|char))",
+            rf"(?:token{SEP}smuggling|payload{SEP}splitting|"
+            rf"invisible{SEP}(?:text|characters?|unicode)|"
+            rf"zero[-\s]?width{SEP}(?:space|char))",
             re.I,
         ),
         "Token smuggling / invisible character attack",
@@ -99,34 +131,47 @@ class JailbreakPolicy(BasePolicy):
         - Authority challenges ("your training is wrong")
         - Multi-turn manipulation (false consensus building)
         - Token smuggling and invisible characters
+
+    Content is normalised (NFKC, invisible characters, common Latin/Cyrillic
+    confusables) before matching, and inter-word separators are flexible.
+    Detection is still pattern based: encoded payloads, paraphrase, synonyms and
+    non-English phrasing are not covered.
     """
 
     policy_id = "jailbreak-detection"
-    description = "Identifies attempts to bypass model safety measures through manipulation, encoding tricks, and multi-turn attacks."
+    description = (
+        "Identifies attempts to bypass model safety measures through "
+        "manipulation, encoding tricks, and multi-turn attacks."
+    )
 
     def __init__(self, parameters: dict[str, Any] | None = None) -> None:
         super().__init__(parameters)
-        self._min_severity = ViolationSeverity(
-            self._parameters.get("min_severity", "low")
-        )
+        self._min_severity = ViolationSeverity(self._parameters.get("min_severity", "low"))
 
     def evaluate(self, content: str, *, direction: str = "input") -> PolicyResult:
         start = time.perf_counter()
         violations: list[Violation] = []
 
+        variants = normalize_variants(content)
+
         for pattern, description, severity in _JAILBREAK_PATTERNS:
-            match = pattern.search(content)
-            if match:
+            for match in collect_matches(pattern, variants, MAX_MATCHES_PER_PATTERN):
+                raw = match.group(0)
                 violations.append(
                     Violation(
                         policy_id=self.policy_id,
                         severity=severity,
                         message=f"Jailbreak: {description}",
-                        matched_content=match.group(0)[:120],
+                        matched_content=raw[:120],
                         blocked=True,
                         metadata={
                             "type": "jailbreak",
+                            "pattern": description,
                             "direction": direction,
+                            "char_count": len(raw),
+                            # Full, untruncated match: REDACT prefers this over
+                            # the truncated matched_content.
+                            "raw_match": raw,
                         },
                     )
                 )
