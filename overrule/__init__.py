@@ -22,7 +22,6 @@ Usage:
 
 from overrule.exceptions import (
     ConfigurationError,
-    ContentTooLargeError,
     OverruleError,
     PolicyEvaluationError,
     TransportError,
@@ -42,7 +41,7 @@ from overrule.stream import StreamGuard
 from overrule.sync import SyncGuard
 from overrule.transport.dead_letter import DeadLetterQueue
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     # Core
@@ -76,5 +75,4 @@ __all__ = [
     "ConfigurationError",
     "TransportError",
     "PolicyEvaluationError",
-    "ContentTooLargeError",
 ]

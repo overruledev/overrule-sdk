@@ -3,18 +3,12 @@
 from __future__ import annotations
 
 import os
-import sys
 from typing import Any
 
-if sys.version_info >= (3, 11):
-    from enum import StrEnum
-else:
-    from enum import Enum
-
-    class StrEnum(str, Enum):
-        pass
-
 from pydantic import BaseModel, Field
+
+from overrule._compat import StrEnum
+from overrule.models.violation import ViolationSeverity
 
 
 class PolicyAction(StrEnum):
@@ -32,7 +26,11 @@ class PolicyConfig(BaseModel):
     id: str
     enabled: bool = True
     action: PolicyAction = PolicyAction.LOG
-    severity_override: str | None = None
+    #: Force every violation from this policy to a fixed severity, replacing the
+    #: severity the policy itself assigned. The policy's own value is preserved on
+    #: the violation as ``metadata["original_severity"]``. Applied to input, output
+    #: and streamed evaluation alike. ``None`` (default) keeps the policy's severity.
+    severity_override: ViolationSeverity | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -45,14 +43,18 @@ class GuardConfig(BaseModel):
     policies: list[PolicyConfig] = Field(default_factory=list)
     default_action: PolicyAction = PolicyAction.WARN
     fail_open: bool = True
-    async_reporting: bool = True
     batch_size: int = Field(default=50, ge=1, le=100)
     flush_interval_seconds: float = Field(default=5.0, ge=0.1, le=300.0)
+    #: Cap on how much content is *stored and reported*. Policy evaluation always
+    #: scans the full content in overlapping windows (see ``Guard._evaluate_content``).
     max_content_length: int = Field(default=100_000, ge=1_000, le=10_000_000)
     max_retries: int = Field(default=3, ge=0, le=10)
     circuit_break_threshold: int = Field(default=5, ge=1, le=100)
     circuit_break_cooldown_seconds: float = Field(default=30.0, ge=1.0, le=600.0)
-    redact_on_block: bool = True
+    #: Off by default: prompts and completions never leave your infrastructure.
+    #: When enabled, a *masked* (shape-only) preview of each match is reported
+    #: alongside its length and hash to help debug policy false positives.
+    send_match_preview: bool = False
 
     @classmethod
     def from_env(cls, **overrides: Any) -> GuardConfig:
@@ -61,7 +63,8 @@ class GuardConfig(BaseModel):
         Env vars use OVERRULE_ prefix:
             OVERRULE_API_KEY, OVERRULE_ENDPOINT, OVERRULE_ENVIRONMENT,
             OVERRULE_FAIL_OPEN, OVERRULE_DEFAULT_ACTION, OVERRULE_BATCH_SIZE,
-            OVERRULE_FLUSH_INTERVAL, OVERRULE_MAX_CONTENT_LENGTH
+            OVERRULE_FLUSH_INTERVAL, OVERRULE_MAX_CONTENT_LENGTH,
+            OVERRULE_SEND_MATCH_PREVIEW
         """
         env_values: dict[str, Any] = {}
 
@@ -81,6 +84,8 @@ class GuardConfig(BaseModel):
             env_values["flush_interval_seconds"] = float(flush_interval)
         if max_content := os.getenv("OVERRULE_MAX_CONTENT_LENGTH"):
             env_values["max_content_length"] = int(max_content)
+        if send_preview := os.getenv("OVERRULE_SEND_MATCH_PREVIEW"):
+            env_values["send_match_preview"] = send_preview.lower() in ("true", "1", "yes")
 
         # Explicit overrides take precedence
         merged = {**env_values, **{k: v for k, v in overrides.items() if v is not None}}

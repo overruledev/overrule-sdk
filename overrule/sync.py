@@ -10,9 +10,9 @@ import asyncio
 import functools
 import threading
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
-from overrule.guard import Guard
+from overrule.guard import ChatResponse, Direction, Guard
 from overrule.models.config import GuardConfig, PolicyAction
 from overrule.policies.base import PolicyResult
 
@@ -76,16 +76,19 @@ class SyncGuard:
         policies: list[str] | None = None,
         provider: str = "openai",
         **kwargs: Any,
-    ) -> dict[str, Any]:
+    ) -> ChatResponse:
         """Synchronous LLM call with governance policies applied."""
-        return self._run(
-            self._guard.chat(
-                model=model,
-                messages=messages,
-                policies=policies,
-                provider=provider,
-                **kwargs,
-            )
+        return cast(
+            ChatResponse,
+            self._run(
+                self._guard.chat(
+                    model=model,
+                    messages=messages,
+                    policies=policies,
+                    provider=provider,
+                    **kwargs,
+                )
+            ),
         )
 
     def evaluate(
@@ -93,11 +96,12 @@ class SyncGuard:
         content: str,
         *,
         policies: list[str] | None = None,
-        direction: str = "input",
+        direction: Direction = "input",
     ) -> PolicyResult:
         """Synchronously evaluate content against policies."""
-        return self._run(
-            self._guard.evaluate(content, policies=policies, direction=direction)
+        return cast(
+            PolicyResult,
+            self._run(self._guard.evaluate(content, policies=policies, direction=direction)),
         )
 
     def protect(
@@ -113,13 +117,19 @@ class SyncGuard:
         """
         effective_action = action
 
+        # `_active_policies` rather than the raw list: a policy disabled via
+        # PolicyConfig(enabled=False) must neither run nor be reported in
+        # `policies_applied`. Passing `policies` straight through left a disabled
+        # policy listed on the event even though `_resolve_policies` dropped it.
+        active_policies = self._guard._active_policies(policies)
+
         def decorator(func: F) -> F:
             @functools.wraps(func)
             def wrapper(*args: Any, **kwargs: Any) -> Any:
                 return self._run(
                     self._guard._execute_protected(
                         func,
-                        policies or self._guard._default_policies,
+                        active_policies,
                         effective_action or self._guard._config.default_action,
                         args,
                         kwargs,

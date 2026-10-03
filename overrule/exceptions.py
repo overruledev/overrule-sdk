@@ -26,20 +26,7 @@ class PolicyEvaluationError(OverruleError):
     def __init__(self, policy_id: str, original_error: Exception) -> None:
         self.policy_id = policy_id
         self.original_error = original_error
-        super().__init__(
-            f"Policy '{policy_id}' failed during evaluation: {original_error}"
-        )
-
-
-class ContentTooLargeError(OverruleError):
-    """Raised when input content exceeds configured maximum length."""
-
-    def __init__(self, content_length: int, max_length: int) -> None:
-        self.content_length = content_length
-        self.max_length = max_length
-        super().__init__(
-            f"Content length {content_length} exceeds maximum {max_length}"
-        )
+        super().__init__(f"Policy '{policy_id}' failed during evaluation: {original_error}")
 
 
 class ViolationError(OverruleError):
