@@ -57,7 +57,10 @@ class TestOverrides:
 
 class TestDefaults:
     def test_default_endpoint(self) -> None:
-        config = GuardConfig.from_env()
+        # Explicitly cleared: the suite sets OVERRULE_ENDPOINT to keep tests off the
+        # network, and this asserts the built-in default when nothing is configured.
+        with patch.dict(os.environ, {}, clear=True):
+            config = GuardConfig.from_env()
         assert config.endpoint == "https://overrule.dev/api"
 
     def test_default_action(self) -> None:

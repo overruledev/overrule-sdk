@@ -1,5 +1,6 @@
 """Tests for the EventReporter with retry, backoff, and circuit breaker."""
 
+import logging
 
 import pytest
 
@@ -75,14 +76,83 @@ class TestCircuitBreaker:
 
 
 class TestBufferLimits:
-    def test_buffer_respects_maxlen(self) -> None:
-        reporter = EventReporter(
+    """Buffer overflow used to be the one event-loss path invisible in `metrics`.
+
+    `deque(maxlen=...)` evicts the oldest entry on append without telling anyone, so
+    `events_dropped` stayed at 0 while events were being thrown away.
+    """
+
+    @staticmethod
+    def _reporter(buffer_max_size: int = 5) -> EventReporter:
+        return EventReporter(
             endpoint="http://localhost:9999",
-            buffer_max_size=5,
+            buffer_max_size=buffer_max_size,
         )
+
+    def test_buffer_respects_maxlen(self) -> None:
+        reporter = self._reporter()
         for _ in range(10):
             reporter.enqueue(_make_event())
         assert reporter.pending_count == 5
+
+    def test_overflow_increments_events_dropped(self) -> None:
+        reporter = self._reporter()
+        for _ in range(10):
+            reporter.enqueue(_make_event())
+        # 5 fit, the next 5 each evicted an older event.
+        assert reporter.metrics["events_dropped"] == 5
+        assert reporter.metrics["buffer_overflows"] == 5
+
+    def test_filling_the_buffer_exactly_drops_nothing(self) -> None:
+        reporter = self._reporter()
+        for _ in range(5):
+            reporter.enqueue(_make_event())
+        assert reporter.pending_count == 5
+        assert reporter.metrics["events_dropped"] == 0
+        assert reporter.metrics["buffer_overflows"] == 0
+
+    def test_sent_plus_dropped_plus_pending_accounts_for_every_event(self) -> None:
+        """The accounting identity the withdrawn 'zero event loss' claim relied on."""
+        reporter = self._reporter()
+        for _ in range(23):
+            reporter.enqueue(_make_event())
+        metrics = reporter.metrics
+        total = metrics["events_sent"] + metrics["events_dropped"] + metrics["events_pending"]
+        assert total == 23
+
+    def test_overflow_keeps_the_newest_events(self) -> None:
+        """Drop-oldest is deliberate: under backpressure the newest events matter most."""
+        reporter = self._reporter(buffer_max_size=2)
+        events = [_make_event() for _ in range(4)]
+        for event in events:
+            reporter.enqueue(event)
+        buffered_ids = [payload["id"] for payload in reporter._buffer]
+        assert buffered_ids == [events[2].id, events[3].id]
+
+    def test_overflow_warning_is_throttled(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A saturated buffer overflows on every enqueue; warning each time is its own outage."""
+        reporter = self._reporter(buffer_max_size=1)
+        with caplog.at_level(logging.WARNING, logger="overrule.transport"):
+            for _ in range(50):
+                reporter.enqueue(_make_event())
+        overflow_warnings = [r for r in caplog.records if "Event buffer full" in r.message]
+        assert len(overflow_warnings) == 1
+        assert reporter.metrics["buffer_overflows"] == 49
+
+    def test_metrics_expose_the_buffer_capacity(self) -> None:
+        assert self._reporter(buffer_max_size=7).metrics["buffer_capacity"] == 7
+
+    def test_a_serialisation_failure_is_also_counted(self) -> None:
+        """The other previously-silent enqueue loss path."""
+        reporter = self._reporter()
+
+        class Unserialisable:
+            def __getattr__(self, name: str) -> object:
+                raise RuntimeError("boom")
+
+        reporter.enqueue(Unserialisable())  # type: ignore[arg-type]
+        assert reporter.pending_count == 0
+        assert reporter.metrics["events_dropped"] == 1
 
 
 class TestLifecycle:

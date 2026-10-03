@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from overrule import Guard
-from overrule.policies.base import BasePolicy, PolicyResult
 from overrule.models.violation import Violation, ViolationSeverity
+from overrule.policies.base import BasePolicy, PolicyResult
 
 
 class MockPolicy(BasePolicy):
@@ -48,8 +48,10 @@ class MockPolicyV2(BasePolicy):
 
 
 @pytest.fixture
-def guard():
-    return Guard(api_key="test", fail_open=True)
+async def guard():
+    g = Guard(api_key="test", fail_open=True)
+    yield g
+    await g.shutdown()
 
 
 async def test_register_and_use_custom_policy(guard: Guard):
@@ -118,9 +120,7 @@ async def test_builtin_policies_still_work_after_reload(guard: Guard):
 
     guard.reload_policies()
 
-    result = await guard.evaluate(
-        "My SSN is 123-45-6789", policies=["pii-detection"]
-    )
+    result = await guard.evaluate("My SSN is 123-45-6789", policies=["pii-detection"])
     assert not result.passed
 
 
